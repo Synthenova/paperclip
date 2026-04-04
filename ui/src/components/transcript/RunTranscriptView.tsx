@@ -318,6 +318,23 @@ function shouldHideNiceModeStderr(text: string): boolean {
   return normalized.startsWith("[paperclip] skipping saved session resume");
 }
 
+function isPlaceholderToolName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  return normalized === "" || normalized === "?" || normalized === "unknown";
+}
+
+function hasMeaningfulToolInput(input: unknown): boolean {
+  if (input === null || input === undefined) return false;
+  if (typeof input === "string") return input.trim().length > 0;
+  if (typeof input === "number" || typeof input === "boolean") return true;
+  const record = asRecord(input);
+  if (!record) return true;
+  const keys = Object.keys(record);
+  if (keys.length === 0) return false;
+  if (keys.length === 1 && keys[0] === "raw") return false;
+  return true;
+}
+
 function groupCommandBlocks(blocks: TranscriptBlock[]): TranscriptBlock[] {
   const grouped: TranscriptBlock[] = [];
   let pending: Array<Extract<TranscriptBlock, { type: "command_group" }>["items"][number]> = [];
@@ -448,11 +465,23 @@ export function normalizeTranscript(entries: TranscriptEntry[], streaming: boole
     }
 
     if (entry.kind === "tool_call") {
+      const toolUseId = entry.toolUseId ?? extractToolUseId(entry.input);
+      const existing = toolUseId ? pendingToolBlocks.get(toolUseId) : undefined;
+      if (existing) {
+        if (!isPlaceholderToolName(entry.name)) {
+          existing.name = displayToolName(entry.name, entry.input);
+        }
+        if (hasMeaningfulToolInput(entry.input) && !hasMeaningfulToolInput(existing.input)) {
+          existing.input = entry.input;
+        }
+        continue;
+      }
+
       const toolBlock: Extract<TranscriptBlock, { type: "tool" }> = {
         type: "tool",
         ts: entry.ts,
         name: displayToolName(entry.name, entry.input),
-        toolUseId: entry.toolUseId ?? extractToolUseId(entry.input),
+        toolUseId,
         input: entry.input,
         status: "running",
       };

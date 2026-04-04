@@ -1,0 +1,36 @@
+{
+  "name": "@paperclipai/plugin-google-search-console-example",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Google Search Console plugin that proxies a Super Gateway MCP endpoint into Paperclip agent tools.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "prebuild": "node ../../../../scripts/ensure-plugin-build-deps.mjs",
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "vitest run --config ./vitest.config.ts",
+    "typecheck": "pnpm --filter @paperclipai/plugin-sdk build && tsc --noEmit"
+  },
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js"
+  },
+  "keywords": [
+    "paperclip",
+    "plugin",
+    "connector"
+  ],
+  "author": "Paperclip",
+  "license": "MIT",
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

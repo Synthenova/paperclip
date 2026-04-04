@@ -1157,6 +1157,26 @@ export function heartbeatService(db: Db) {
       .then((rows) => rows[0] ?? null);
   }
 
+  async function getLatestTaskSessionForAdapter(
+    companyId: string,
+    agentId: string,
+    adapterType: string,
+  ) {
+    return db
+      .select()
+      .from(agentTaskSessions)
+      .where(
+        and(
+          eq(agentTaskSessions.companyId, companyId),
+          eq(agentTaskSessions.agentId, agentId),
+          eq(agentTaskSessions.adapterType, adapterType),
+        ),
+      )
+      .orderBy(desc(agentTaskSessions.updatedAt), desc(agentTaskSessions.createdAt))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+  }
+
   async function getLatestRunForSession(
     agentId: string,
     sessionId: string,
@@ -2583,6 +2603,10 @@ export function heartbeatService(db: Db) {
     const taskSession = taskKey
       ? await getTaskSession(agent.companyId, agent.id, agent.adapterType, taskKey)
       : null;
+    const adapterSessionFallback =
+      agent.adapterType === "letta_local" && !taskSession
+        ? await getLatestTaskSessionForAdapter(agent.companyId, agent.id, agent.adapterType)
+        : null;
     const resetTaskSession = shouldResetTaskSessionForWake(context);
     const sessionResetReason = describeSessionResetReason(context);
     const taskSessionForRun = resetTaskSession ? null : taskSession;
@@ -2597,7 +2621,8 @@ export function heartbeatService(db: Db) {
     const previousSessionParams =
       explicitResumeSessionParams ??
       (explicitResumeSessionDisplayId ? { sessionId: explicitResumeSessionDisplayId } : null) ??
-      normalizeSessionParams(sessionCodec.deserialize(taskSessionForRun?.sessionParamsJson ?? null));
+      normalizeSessionParams(sessionCodec.deserialize(taskSessionForRun?.sessionParamsJson ?? null)) ??
+      normalizeSessionParams(sessionCodec.deserialize(adapterSessionFallback?.sessionParamsJson ?? null));
     const config = parseObject(agent.adapterConfig);
     const requestedExecutionWorkspaceMode = resolveExecutionWorkspaceMode({
       projectPolicy: projectExecutionWorkspacePolicy,

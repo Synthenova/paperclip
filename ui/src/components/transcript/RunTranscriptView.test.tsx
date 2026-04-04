@@ -110,4 +110,49 @@ describe("RunTranscriptView", () => {
     expect(html).toContain("<li>posted issue update</li>");
     expect(html).not.toContain("result");
   });
+
+  it("merges repeated tool calls with the same id instead of rendering placeholder duplicates", () => {
+    const entries: TranscriptEntry[] = [
+      {
+        kind: "tool_call",
+        ts: "2026-04-04T07:24:38.092Z",
+        name: "Task",
+        toolUseId: "call_1",
+        input: { raw: "" },
+      },
+      {
+        kind: "tool_call",
+        ts: "2026-04-04T07:24:38.765Z",
+        name: "?",
+        toolUseId: "call_1",
+        input: {
+          description: "Inspect current task context",
+          prompt: "Fetch live Paperclip task context.",
+        },
+      },
+      {
+        kind: "tool_result",
+        ts: "2026-04-04T07:24:41.000Z",
+        toolUseId: "call_1",
+        content: "Permission denied",
+        isError: true,
+      },
+    ];
+
+    const blocks = normalizeTranscript(entries, false);
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      type: "tool_group",
+      items: [{
+        name: "Task",
+        input: {
+          description: "Inspect current task context",
+          prompt: "Fetch live Paperclip task context.",
+        },
+        result: "Permission denied",
+        status: "error",
+      }],
+    });
+  });
 });

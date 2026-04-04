@@ -20,6 +20,15 @@ import {
 } from "@paperclipai/adapter-codex-local/server";
 import { agentConfigurationDoc as codexAgentConfigurationDoc, models as codexModels } from "@paperclipai/adapter-codex-local";
 import {
+  execute as lettaExecute,
+  listLettaModels,
+  listLettaSkills,
+  syncLettaSkills,
+  testEnvironment as lettaTestEnvironment,
+  sessionCodec as lettaSessionCodec,
+} from "@paperclipai/adapter-letta-local/server";
+import { agentConfigurationDoc as lettaAgentConfigurationDoc, models as lettaModels } from "@paperclipai/adapter-letta-local";
+import {
   execute as cursorExecute,
   listCursorSkills,
   syncCursorSkills,
@@ -99,6 +108,20 @@ const claudeLocalAdapter: ServerAdapterModule = {
   supportsLocalAgentJwt: true,
   agentConfigurationDoc: claudeAgentConfigurationDoc,
   getQuotaWindows: claudeGetQuotaWindows,
+};
+
+const lettaLocalAdapter: ServerAdapterModule = {
+  type: "letta_local",
+  execute: lettaExecute,
+  testEnvironment: lettaTestEnvironment,
+  listSkills: listLettaSkills,
+  syncSkills: syncLettaSkills,
+  sessionCodec: lettaSessionCodec,
+  sessionManagement: getAdapterSessionManagement("letta_local") ?? undefined,
+  models: lettaModels,
+  listModels: listLettaModels,
+  supportsLocalAgentJwt: true,
+  agentConfigurationDoc: lettaAgentConfigurationDoc,
 };
 
 const codexLocalAdapter: ServerAdapterModule = {
@@ -208,6 +231,7 @@ function registerBuiltInAdapters() {
   for (const adapter of [
     claudeLocalAdapter,
     codexLocalAdapter,
+    lettaLocalAdapter,
     openCodeLocalAdapter,
     piLocalAdapter,
     cursorLocalAdapter,

@@ -11,7 +11,8 @@
  * - Retrieving UI slot contributions for frontend rendering
  * - Discovering and executing plugin-contributed agent tools
  *
- * All routes require board-level authentication (assertBoard middleware).
+ * Most routes require board-level authentication (assertBoard middleware).
+ * Plugin tool discovery/execution routes also allow authenticated agent callers.
  *
  * @module server/routes/plugins
  * @see doc/plugins/PLUGIN_SPEC.md for the full plugin specification
@@ -137,6 +138,14 @@ const BUNDLED_PLUGIN_EXAMPLES: AvailablePluginExample[] = [
     displayName: "Kitchen Sink (Example)",
     description: "Reference plugin that demonstrates the current Paperclip plugin API surface, bridge flows, UI extension surfaces, jobs, webhooks, tools, streams, and trusted local workspace/process demos.",
     localPath: "packages/plugins/examples/plugin-kitchen-sink-example",
+    tag: "example",
+  },
+  {
+    packageName: "@paperclipai/plugin-google-search-console-example",
+    pluginKey: "paperclip.google-search-console",
+    displayName: "Google Search Console MCP",
+    description: "Connector plugin that exposes a Google Search Console MCP server behind Super Gateway as Paperclip agent tools.",
+    localPath: "packages/plugins/examples/plugin-google-search-console-example",
     tag: "example",
   },
 ];
@@ -481,9 +490,9 @@ export function pluginRoutes(
    *
    * Response: `AgentToolDescriptor[]`
    * Errors: 501 if tool dispatcher is not configured
-   */
+  */
   router.get("/plugins/tools", async (req, res) => {
-    assertBoard(req);
+    getActorInfo(req);
 
     if (!toolDeps) {
       res.status(501).json({ error: "Plugin tool dispatch is not enabled" });
@@ -517,7 +526,7 @@ export function pluginRoutes(
    * - 502 if the plugin worker is unavailable or the RPC call fails
    */
   router.post("/plugins/tools/execute", async (req, res) => {
-    assertBoard(req);
+    getActorInfo(req);
 
     if (!toolDeps) {
       res.status(501).json({ error: "Plugin tool dispatch is not enabled" });

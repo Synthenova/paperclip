@@ -65,6 +65,29 @@ describe("adapter model listing", () => {
   });
 
 
+
+  it("returns letta models from the live catalog", async () => {
+    process.env.LETTA_API_KEY = "at-test-key";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { name: "gpt-5.4", display_name: "GPT-5.4", model_type: "llm" },
+        { handle: "anthropic/claude-sonnet-4-6", display_name: "Claude Sonnet 4.6", model_type: "llm" },
+      ],
+    } as Response);
+
+    try {
+      const models = await listAdapterModels("letta_local");
+      expect(models).toEqual([
+        { id: "gpt-5.4", label: "GPT-5.4" },
+        { id: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+      ]);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      delete process.env.LETTA_API_KEY;
+    }
+  });
+
   it("returns cursor fallback models when CLI discovery is unavailable", async () => {
     setCursorModelsRunnerForTests(() => ({
       status: null,

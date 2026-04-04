@@ -14,6 +14,8 @@ const payload = {
   prompt: fs.readFileSync(0, "utf8"),
   codexHome: process.env.CODEX_HOME || null,
   paperclipWakePayloadJson: process.env.PAPERCLIP_WAKE_PAYLOAD_JSON || null,
+  runtimeEnvFile: process.env.PAPERCLIP_RUNTIME_ENV_FILE || null,
+  paperclipWakePayloadJson: process.env.PAPERCLIP_WAKE_PAYLOAD_JSON || null,
   paperclipEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("PAPERCLIP_"))
     .sort(),
@@ -33,6 +35,8 @@ type CapturePayload = {
   argv: string[];
   prompt: string;
   codexHome: string | null;
+  paperclipWakePayloadJson: string | null;
+  runtimeEnvFile: string | null;
   paperclipWakePayloadJson: string | null;
   paperclipEnvKeys: string[];
 };
@@ -593,6 +597,83 @@ describe("codex execute", () => {
       else process.env.PAPERCLIP_IN_WORKTREE = previousPaperclipInWorktree;
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
       else process.env.CODEX_HOME = previousCodexHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("writes a Paperclip runtime env bridge when agentHome is available", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-runtime-env-"));
+    const workspace = path.join(root, "workspace");
+    const agentHome = path.join(root, "agent-home");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(agentHome, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      const logs: LogEntry[] = [];
+      const result = await execute({
+        runId: "run-runtime-env",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Codex Coder",
+          adapterType: "codex_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {
+          paperclipWorkspace: {
+            agentHome,
+          },
+        },
+        authToken: "run-jwt-token",
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.runtimeEnvFile).toBe(path.join(agentHome, "paperclip-runtime.env"));
+      const envFile = capture.runtimeEnvFile as string;
+      const envFileBody = await fs.readFile(envFile, "utf8");
+      expect(envFileBody).toContain("export PAPERCLIP_API_KEY='run-jwt-token'");
+      expect(envFileBody).toContain("export PAPERCLIP_RUN_ID='run-runtime-env'");
+      expect(logs).toContainEqual(
+        expect.objectContaining({
+          stream: "stdout",
+          chunk: expect.stringContaining("Wrote Codex runtime env bridge"),
+        }),
+      );
+      expect(logs).toContainEqual(
+        expect.objectContaining({
+          stream: "stdout",
+          chunk: expect.stringContaining("Codex runtime auth bridge: PAPERCLIP_API_KEY prepared"),
+        }),
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
       await fs.rm(root, { recursive: true, force: true });
     }
   });

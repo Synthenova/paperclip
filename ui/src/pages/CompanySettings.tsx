@@ -56,6 +56,10 @@ export function CompanySettings() {
   const [inviteSnippet, setInviteSnippet] = useState<string | null>(null);
   const [snippetCopied, setSnippetCopied] = useState(false);
   const [snippetCopyDelightId, setSnippetCopyDelightId] = useState(0);
+  const [humanInviteError, setHumanInviteError] = useState<string | null>(null);
+  const [humanInviteUrl, setHumanInviteUrl] = useState<string | null>(null);
+  const [humanInviteCopied, setHumanInviteCopied] = useState(false);
+  const [humanInviteCopyDelightId, setHumanInviteCopyDelightId] = useState(0);
 
   const generalDirty =
     !!selectedCompany &&
@@ -158,6 +162,39 @@ export function CompanySettings() {
     }
   });
 
+  const humanInviteMutation = useMutation({
+    mutationFn: () =>
+      accessApi.createCompanyInvite(selectedCompanyId!, {
+        allowedJoinTypes: "human"
+      }),
+    onSuccess: async (invite) => {
+      setHumanInviteError(null);
+      const base = window.location.origin.replace(/\/+$/, "");
+      const absoluteUrl = invite.inviteUrl.startsWith("http")
+        ? invite.inviteUrl
+        : `${base}${invite.inviteUrl}`;
+      setHumanInviteUrl(absoluteUrl);
+      setHumanInviteCopied(false);
+      setHumanInviteCopyDelightId(0);
+      try {
+        await navigator.clipboard.writeText(absoluteUrl);
+        setHumanInviteCopied(true);
+        setHumanInviteCopyDelightId((prev) => prev + 1);
+        setTimeout(() => setHumanInviteCopied(false), 2000);
+      } catch {
+        /* clipboard may not be available */
+      }
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.sidebarBadges(selectedCompanyId!)
+      });
+    },
+    onError: (err) => {
+      setHumanInviteError(
+        err instanceof Error ? err.message : "Failed to create human invite"
+      );
+    }
+  });
+
   const syncLogoState = (nextLogoUrl: string | null) => {
     setLogoUrl(nextLogoUrl ?? "");
     void queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
@@ -199,6 +236,10 @@ export function CompanySettings() {
     setInviteSnippet(null);
     setSnippetCopied(false);
     setSnippetCopyDelightId(0);
+    setHumanInviteError(null);
+    setHumanInviteUrl(null);
+    setHumanInviteCopied(false);
+    setHumanInviteCopyDelightId(0);
   }, [selectedCompanyId]);
 
   const archiveMutation = useMutation({
@@ -465,6 +506,81 @@ export function CompanySettings() {
           Invites
         </div>
         <div className="space-y-3 rounded-md border border-border px-4 py-4">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-muted-foreground">
+              Generate a human user invite link.
+            </span>
+            <HintIcon text="Creates a short-lived invite URL for a signed-in user. They still need approval after accepting it." />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              data-testid="company-settings-human-invites-generate-button"
+              size="sm"
+              variant="outline"
+              onClick={() => humanInviteMutation.mutate()}
+              disabled={humanInviteMutation.isPending}
+            >
+              {humanInviteMutation.isPending
+                ? "Generating..."
+                : "Generate Human Invite Link"}
+            </Button>
+          </div>
+          {humanInviteError && (
+            <p className="text-sm text-destructive">{humanInviteError}</p>
+          )}
+          {humanInviteUrl && (
+            <div
+              className="rounded-md border border-border bg-muted/30 p-2"
+              data-testid="company-settings-human-invites-link"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs text-muted-foreground">
+                  Human Invite URL
+                </div>
+                {humanInviteCopied && (
+                  <span
+                    key={humanInviteCopyDelightId}
+                    className="flex items-center gap-1 text-xs text-green-600 animate-pulse"
+                  >
+                    <Check className="h-3 w-3" />
+                    Copied
+                  </span>
+                )}
+              </div>
+              <div className="mt-1 space-y-1.5">
+                <textarea
+                  data-testid="company-settings-human-invites-link-textarea"
+                  className="h-24 w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs outline-none"
+                  value={humanInviteUrl}
+                  readOnly
+                />
+                <p className="text-xs text-muted-foreground">
+                  Send this link to the user. After they accept it, approve the join request from Inbox.
+                </p>
+                <div className="flex justify-end">
+                  <Button
+                    data-testid="company-settings-human-invites-copy-button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(humanInviteUrl);
+                        setHumanInviteCopied(true);
+                        setHumanInviteCopyDelightId((prev) => prev + 1);
+                        setTimeout(() => setHumanInviteCopied(false), 2000);
+                      } catch {
+                        /* clipboard may not be available */
+                      }
+                    }}
+                  >
+                    {humanInviteCopied ? "Copied link" : "Copy link"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="border-t border-border pt-3" />
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-muted-foreground">
               Generate an OpenClaw agent invite snippet.

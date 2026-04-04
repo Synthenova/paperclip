@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "create-agent-adapter": {
+      "source": "paperclipai/paperclip",
+      "sourceType": "github",
+      "computedHash": "14f914f59c894431d0837a6c6ac517a9d95f3b08f5c8638d64f60b68556aa9f6"
+    },
+    "paperclip-create-plugin": {
+      "source": "paperclipai/paperclip",
+      "sourceType": "github",
+      "computedHash": "27d7a689e0b60d34d920a9b2f9fb423eaa4652e4ad897f850c5371a437fa1538"
+    }
+  }
+}

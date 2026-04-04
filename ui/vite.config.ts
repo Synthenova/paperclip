@@ -15,6 +15,7 @@ export default defineConfig({
     port: 5173,
     // WSL2 /mnt/ drives don't support inotify — fall back to polling so HMR works
     watch: process.cwd().startsWith("/mnt/") ? { usePolling: true, interval: 1000 } : undefined,
+    allowedHosts: [".ngrok-free.app"],
     proxy: {
       "/api": {
         target: "http://localhost:3100",

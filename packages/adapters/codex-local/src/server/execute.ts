@@ -142,6 +142,48 @@ function resolveCodexSkillsDir(codexHome: string): string {
   return path.join(codexHome, "skills");
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function buildPaperclipRuntimeEnvFileContent(env: Record<string, string>): string {
+  const keys = [
+    "AGENT_HOME",
+    "PAPERCLIP_AGENT_ID",
+    "PAPERCLIP_API_URL",
+    "PAPERCLIP_COMPANY_ID",
+    "PAPERCLIP_RUN_ID",
+    "PAPERCLIP_TASK_ID",
+    "PAPERCLIP_WAKE_REASON",
+    "PAPERCLIP_WAKE_COMMENT_ID",
+    "PAPERCLIP_APPROVAL_ID",
+    "PAPERCLIP_APPROVAL_STATUS",
+    "PAPERCLIP_LINKED_ISSUE_IDS",
+    "PAPERCLIP_WORKSPACE_CWD",
+    "PAPERCLIP_WORKSPACE_SOURCE",
+    "PAPERCLIP_WORKSPACE_STRATEGY",
+    "PAPERCLIP_WORKSPACE_ID",
+    "PAPERCLIP_WORKSPACE_REPO_URL",
+    "PAPERCLIP_WORKSPACE_REPO_REF",
+    "PAPERCLIP_WORKSPACE_BRANCH",
+    "PAPERCLIP_WORKSPACE_WORKTREE_PATH",
+    "PAPERCLIP_WORKSPACES_JSON",
+    "PAPERCLIP_RUNTIME_SERVICE_INTENTS_JSON",
+    "PAPERCLIP_RUNTIME_SERVICES_JSON",
+    "PAPERCLIP_RUNTIME_PRIMARY_URL",
+    "PAPERCLIP_RUNTIME_ENV_FILE",
+    "PAPERCLIP_API_KEY",
+  ] as const;
+
+  const lines = keys.flatMap((key) => {
+    const value = env[key];
+    if (typeof value !== "string" || value.length === 0) return [];
+    return [`export ${key}=${shellQuote(value)}`];
+  });
+
+  return `${lines.join("\n")}\n`;
+}
+
 type EnsureCodexSkillsInjectedOptions = {
   skillsHome?: string;
   skillsEntries?: Array<{ key: string; runtimeName: string; source: string }>;
@@ -290,6 +332,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const hasExplicitApiKey =
     typeof envConfig.PAPERCLIP_API_KEY === "string" && envConfig.PAPERCLIP_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildPaperclipEnv(agent) };
+  const runtimeEnvFilePath = agentHome.length > 0 ? path.join(agentHome, "paperclip-runtime.env") : null;
   env.CODEX_HOME = effectiveCodexHome;
   env.PAPERCLIP_RUN_ID = runId;
   const wakeTaskId =
@@ -376,11 +419,34 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (runtimePrimaryUrl) {
     env.PAPERCLIP_RUNTIME_PRIMARY_URL = runtimePrimaryUrl;
   }
+  if (runtimeEnvFilePath) {
+    env.PAPERCLIP_RUNTIME_ENV_FILE = runtimeEnvFilePath;
+  }
   for (const [k, v] of Object.entries(envConfig)) {
     if (typeof v === "string") env[k] = v;
   }
   if (!hasExplicitApiKey && authToken) {
     env.PAPERCLIP_API_KEY = authToken;
+  }
+  await onLog(
+    "stdout",
+    `[paperclip] Codex runtime auth bridge: PAPERCLIP_API_KEY ${env.PAPERCLIP_API_KEY ? "prepared" : "missing"} for this run.${runtimeEnvFilePath ? ` Runtime env file: ${runtimeEnvFilePath}.` : ""}\n`,
+  );
+  if (runtimeEnvFilePath) {
+    try {
+      await fs.mkdir(path.dirname(runtimeEnvFilePath), { recursive: true });
+      await fs.writeFile(runtimeEnvFilePath, buildPaperclipRuntimeEnvFileContent(env), "utf8");
+      await fs.chmod(runtimeEnvFilePath, 0o600);
+      await onLog(
+        "stdout",
+        `[paperclip] Wrote Codex runtime env bridge to "${runtimeEnvFilePath}" for this run.\n`,
+      );
+    } catch (err) {
+      await onLog(
+        "stderr",
+        `[paperclip] Failed to write Codex runtime env bridge at "${runtimeEnvFilePath}": ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
   }
   const effectiveEnv = Object.fromEntries(
     Object.entries({ ...process.env, ...env }).filter(
@@ -460,27 +526,54 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   instructionsChars = promptInstructionsPrefix.length;
   const commandNotes = (() => {
     if (!instructionsFilePath) {
-      return [repoAgentsNote];
+      return runtimeEnvFilePath
+        ? [
+            repoAgentsNote,
+            `Codex runtime env bridge available at ${runtimeEnvFilePath}. Source it if the tool shell does not expose Paperclip auth.`,
+          ]
+        : [repoAgentsNote];
     }
     if (instructionsPrefix.length > 0) {
       if (shouldUseResumeDeltaPrompt) {
-        return [
+        const notes = [
           `Loaded agent instructions from ${instructionsFilePath}`,
           "Skipped stdin instruction reinjection because an existing Codex session is being resumed with a wake delta.",
           repoAgentsNote,
         ];
+        if (runtimeEnvFilePath) {
+          notes.push(
+            `Codex runtime env bridge available at ${runtimeEnvFilePath}. Source it if the tool shell does not expose Paperclip auth.`,
+          );
+        }
+        return notes;
       }
-      return [
+      const notes = [
         `Loaded agent instructions from ${instructionsFilePath}`,
         `Prepended instructions + path directive to stdin prompt (relative references from ${instructionsDir}).`,
         repoAgentsNote,
       ];
+      if (runtimeEnvFilePath) {
+        notes.push(
+          `Codex runtime env bridge available at ${runtimeEnvFilePath}. Source it if the tool shell does not expose Paperclip auth.`,
+        );
+      }
+      return notes;
     }
-    return [
+    const notes = [
       `Configured instructionsFilePath ${instructionsFilePath}, but file could not be read; continuing without injected instructions.`,
       repoAgentsNote,
     ];
+    if (runtimeEnvFilePath) {
+      notes.push(
+        `Codex runtime env bridge available at ${runtimeEnvFilePath}. Source it if the tool shell does not expose Paperclip auth.`,
+      );
+    }
+    return notes;
   })();
+  const runtimeEnvBridgeNote =
+    runtimeEnvFilePath
+      ? `Paperclip runtime env bridge: if \`PAPERCLIP_API_KEY\` is missing inside the Codex shell, source \`${runtimeEnvFilePath}\` before calling the Paperclip API.`
+      : "";
   const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
   const prompt = joinPromptSections([
@@ -488,6 +581,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     renderedBootstrapPrompt,
     wakePrompt,
     sessionHandoffNote,
+    runtimeEnvBridgeNote,
     renderedPrompt,
   ]);
   const promptMetrics = {
