@@ -13,6 +13,7 @@ import {
   deriveAgentUrlKey,
   isUuidLike,
   resetAgentSessionSchema,
+  sendAgentChatMessageSchema,
   testAdapterEnvironmentSchema,
   type AgentSkillSnapshot,
   type InstanceSchedulerHeartbeatAgent,
@@ -1275,6 +1276,98 @@ export function agentRoutes(db: Db) {
       entityType: "agent",
       entityId: id,
       details: { taskKey: taskKey ?? null },
+    });
+
+    res.json(state);
+  });
+
+  router.get("/agents/:id/chat/threads", async (req, res) => {
+    assertBoard(req);
+    const id = req.params.id as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    assertCompanyAccess(req, agent.companyId);
+
+    const threads = await heartbeat.listChatThreads(id);
+    res.json(threads);
+  });
+
+  router.get("/agents/:id/chat/threads/:threadId/runs", async (req, res) => {
+    assertBoard(req);
+    const id = req.params.id as string;
+    const threadId = (req.params.threadId as string).trim();
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    assertCompanyAccess(req, agent.companyId);
+
+    const runs = await heartbeat.listRunsForTaskKey(agent.companyId, agent.id, `chat:${threadId}`);
+    res.json(runs);
+  });
+
+  router.post("/agents/:id/chat/send", validate(sendAgentChatMessageSchema), async (req, res) => {
+    assertBoard(req);
+    const id = req.params.id as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    assertCompanyAccess(req, agent.companyId);
+
+    const result = await heartbeat.sendChatMessage(id, {
+      threadId: typeof req.body.threadId === "string" ? req.body.threadId : null,
+      message: req.body.message,
+      actorType: "user",
+      actorId: req.actor.userId ?? "board",
+    });
+
+    await logActivity(db, {
+      companyId: agent.companyId,
+      actorType: "user",
+      actorId: req.actor.userId ?? "board",
+      agentId: null,
+      runId: result.run.id,
+      action: "agent.chat_message_sent",
+      entityType: "heartbeat_run",
+      entityId: result.run.id,
+      details: {
+        agentId: agent.id,
+        threadId: result.threadId,
+      },
+    });
+
+    res.status(202).json(result);
+  });
+
+  router.post("/agents/:id/chat/threads/:threadId/reset-session", async (req, res) => {
+    assertBoard(req);
+    const id = req.params.id as string;
+    const threadId = (req.params.threadId as string).trim();
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    assertCompanyAccess(req, agent.companyId);
+
+    const state = await heartbeat.resetRuntimeSession(id, { taskKey: `chat:${threadId}` });
+
+    await logActivity(db, {
+      companyId: agent.companyId,
+      actorType: "user",
+      actorId: req.actor.userId ?? "board",
+      agentId: null,
+      runId: null,
+      action: "agent.chat_session_reset",
+      entityType: "agent",
+      entityId: agent.id,
+      details: { threadId },
     });
 
     res.json(state);

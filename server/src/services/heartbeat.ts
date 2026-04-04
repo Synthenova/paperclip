@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
@@ -332,6 +333,7 @@ interface WakeupOptions {
   requestedByActorType?: "user" | "agent" | "system";
   requestedByActorId?: string | null;
   contextSnapshot?: Record<string, unknown>;
+  disableTaskScopeCoalescing?: boolean;
 }
 
 type UsageTotals = {
@@ -652,6 +654,25 @@ function parseIssueAssigneeAdapterOverrides(
  * simpler `agentRuntimeState.sessionId` fallback.
  */
 const HEARTBEAT_TASK_KEY = "__heartbeat__";
+const CHAT_TASK_KEY_PREFIX = "chat:";
+
+function isChatTaskKey(taskKey: string | null | undefined) {
+  return typeof taskKey === "string" && taskKey.startsWith(CHAT_TASK_KEY_PREFIX);
+}
+
+function buildChatTaskKey(threadId: string) {
+  return `${CHAT_TASK_KEY_PREFIX}${threadId}`;
+}
+
+function threadIdFromTaskKey(taskKey: string) {
+  return taskKey.startsWith(CHAT_TASK_KEY_PREFIX) ? taskKey.slice(CHAT_TASK_KEY_PREFIX.length) : taskKey;
+}
+
+function deriveChatLabel(message: string | null | undefined, fallback: string) {
+  const firstLine = typeof message === "string" ? message.split(/\r?\n/, 1)[0]?.trim() ?? "" : "";
+  if (!firstLine) return fallback;
+  return firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine;
+}
 
 function deriveTaskKey(
   contextSnapshot: Record<string, unknown> | null | undefined,
@@ -2624,11 +2645,14 @@ export function heartbeatService(db: Db) {
       normalizeSessionParams(sessionCodec.deserialize(taskSessionForRun?.sessionParamsJson ?? null)) ??
       normalizeSessionParams(sessionCodec.deserialize(adapterSessionFallback?.sessionParamsJson ?? null));
     const config = parseObject(agent.adapterConfig);
-    const requestedExecutionWorkspaceMode = resolveExecutionWorkspaceMode({
-      projectPolicy: projectExecutionWorkspacePolicy,
-      issueSettings: issueExecutionWorkspaceSettings,
-      legacyUseProjectWorkspace: issueAssigneeOverrides?.useProjectWorkspace ?? null,
-    });
+    const isChatRun = asBoolean(context.chatMode, false) || isChatTaskKey(taskKey);
+    const requestedExecutionWorkspaceMode = isChatRun
+      ? "agent_default"
+      : resolveExecutionWorkspaceMode({
+          projectPolicy: projectExecutionWorkspacePolicy,
+          issueSettings: issueExecutionWorkspaceSettings,
+          legacyUseProjectWorkspace: issueAssigneeOverrides?.useProjectWorkspace ?? null,
+        });
     const resolvedWorkspace = await resolveWorkspaceForRun(
       agent,
       context,
@@ -2708,10 +2732,14 @@ export function heartbeatService(db: Db) {
       secretsSvc,
     });
     const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId);
-    const runtimeConfig = {
+    const runtimeConfig: Record<string, unknown> = {
       ...resolvedConfig,
       paperclipRuntimeSkills: runtimeSkillEntries,
     };
+    if (isChatRun) {
+      runtimeConfig.promptTemplate = "{{context.chatUserMessage}}";
+      runtimeConfig.bootstrapPromptTemplate = "";
+    }
     const workspaceOperationRecorder = workspaceOperationsSvc.createRecorder({
       companyId: agent.companyId,
       heartbeatRunId: run.id,
@@ -4030,9 +4058,9 @@ export function heartbeatService(db: Db) {
     const shouldQueueFollowupForCommentWake =
       Boolean(wakeCommentId) && Boolean(sameScopeRunningRun) && !sameScopeQueuedRun;
 
-    const coalescedTargetRun =
-      sameScopeQueuedRun ??
-      (shouldQueueFollowupForCommentWake ? null : sameScopeRunningRun ?? null);
+    const coalescedTargetRun = opts.disableTaskScopeCoalescing
+      ? null
+      : sameScopeQueuedRun ?? (shouldQueueFollowupForCommentWake ? null : sameScopeRunningRun ?? null);
 
     if (coalescedTargetRun) {
       const mergedContextSnapshot = mergeCoalescedContextSnapshot(
@@ -4374,6 +4402,84 @@ export function heartbeatService(db: Db) {
         .orderBy(desc(agentTaskSessions.updatedAt), desc(agentTaskSessions.createdAt));
     },
 
+    listChatThreads: async (agentId: string) => {
+      const agent = await getAgent(agentId);
+      if (!agent) throw notFound("Agent not found");
+
+      const sessions = await db
+        .select()
+        .from(agentTaskSessions)
+        .where(
+          and(
+            eq(agentTaskSessions.companyId, agent.companyId),
+            eq(agentTaskSessions.agentId, agent.id),
+            sql`${agentTaskSessions.taskKey} like ${`${CHAT_TASK_KEY_PREFIX}%`}`,
+          ),
+        )
+        .orderBy(desc(agentTaskSessions.updatedAt), desc(agentTaskSessions.createdAt));
+
+      return Promise.all(
+        sessions.map(async (session) => {
+          const [firstRun] = await db
+            .select({
+              message: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'chatUserMessage'`.as("message"),
+            })
+            .from(heartbeatRuns)
+            .where(
+              and(
+                eq(heartbeatRuns.companyId, agent.companyId),
+                eq(heartbeatRuns.agentId, agent.id),
+                sql`${heartbeatRuns.contextSnapshot} ->> 'taskKey' = ${session.taskKey}`,
+              ),
+            )
+            .orderBy(asc(heartbeatRuns.createdAt))
+            .limit(1);
+
+          const [latestRun] = await db
+            .select({
+              message: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'chatUserMessage'`.as("message"),
+            })
+            .from(heartbeatRuns)
+            .where(
+              and(
+                eq(heartbeatRuns.companyId, agent.companyId),
+                eq(heartbeatRuns.agentId, agent.id),
+                sql`${heartbeatRuns.contextSnapshot} ->> 'taskKey' = ${session.taskKey}`,
+              ),
+            )
+            .orderBy(desc(heartbeatRuns.createdAt))
+            .limit(1);
+
+          const threadId = threadIdFromTaskKey(session.taskKey);
+          return {
+            ...session,
+            threadId,
+            title: deriveChatLabel(firstRun?.message ?? latestRun?.message ?? null, `Chat ${threadId.slice(0, 8)}`),
+            preview: deriveChatLabel(latestRun?.message ?? null, ""),
+          };
+        }),
+      );
+    },
+
+    listRunsForTaskKey: async (companyId: string, agentId: string, taskKey: string) => {
+      const rows = await db
+        .select(heartbeatRunListColumns)
+        .from(heartbeatRuns)
+        .where(
+          and(
+            eq(heartbeatRuns.companyId, companyId),
+            eq(heartbeatRuns.agentId, agentId),
+            sql`${heartbeatRuns.contextSnapshot} ->> 'taskKey' = ${taskKey}`,
+          ),
+        )
+        .orderBy(asc(heartbeatRuns.createdAt));
+
+      return rows.map((row) => ({
+        ...row,
+        resultJson: summarizeHeartbeatRunResultJson(row.resultJson),
+      }));
+    },
+
     resetRuntimeSession: async (agentId: string, opts?: { taskKey?: string | null }) => {
       const agent = await getAgent(agentId);
       if (!agent) throw notFound("Agent not found");
@@ -4407,6 +4513,48 @@ export function heartbeatService(db: Db) {
         sessionParamsJson: null,
         clearedTaskSessions,
       };
+    },
+
+    sendChatMessage: async (
+      agentId: string,
+      input: { threadId?: string | null; message: string; actorType?: "user" | "agent" | "system"; actorId?: string | null },
+    ) => {
+      const agent = await getAgent(agentId);
+      if (!agent) throw notFound("Agent not found");
+
+      const message = input.message.trim();
+      const threadId = readNonEmptyString(input.threadId) ?? randomUUID();
+      const taskKey = buildChatTaskKey(threadId);
+      const existing = await getTaskSession(agent.companyId, agent.id, agent.adapterType, taskKey);
+      if (!existing) {
+        await upsertTaskSession({
+          companyId: agent.companyId,
+          agentId: agent.id,
+          adapterType: agent.adapterType,
+          taskKey,
+          sessionParamsJson: null,
+          sessionDisplayId: null,
+          lastRunId: null,
+          lastError: null,
+        });
+      }
+
+      const run = await enqueueWakeup(agent.id, {
+        source: "on_demand",
+        triggerDetail: "manual",
+        requestedByActorType: input.actorType ?? "user",
+        requestedByActorId: input.actorId ?? null,
+        disableTaskScopeCoalescing: true,
+        contextSnapshot: {
+          chatMode: true,
+          chatThreadId: threadId,
+          chatUserMessage: message,
+          taskKey,
+          useProjectWorkspace: false,
+        },
+      });
+      if (!run) throw conflict("Chat send was skipped because the agent is not currently invokable.");
+      return { threadId, taskKey, run };
     },
 
     listEvents: (runId: string, afterSeq = 0, limit = 200) =>

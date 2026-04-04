@@ -394,4 +394,75 @@ describe("letta execute", () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+
+  it("warns and continues when Letta agent name sync fails", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-letta-sync-warning-"));
+    const workspace = path.join(root, "workspace");
+    const agentHome = path.join(root, "agent-home");
+    const skillsRoot = path.join(root, "runtime-skills");
+    const lettaCliPath = path.join(root, "fake-letta.js");
+    const capturePath = path.join(root, "capture.ndjson");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(agentHome, { recursive: true });
+    const paperclipSkill = await makeSkill(skillsRoot, "paperclip");
+    await writeFakeLettaCli(lettaCliPath);
+
+    const logs: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response("{}", {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      })) as typeof fetch;
+
+    try {
+      const result = await execute({
+        runId: "run-warning",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "CEO",
+          adapterType: "letta_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          cwd: workspace,
+          env: {
+            LETTA_CLI_PATH: lettaCliPath,
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+            LETTA_API_KEY: "test-key",
+            LETTA_BASE_URL: "http://127.0.0.1:8283",
+          },
+          paperclipRuntimeSkills: [
+            {
+              key: "paperclipai/paperclip/paperclip",
+              runtimeName: "paperclip",
+              source: paperclipSkill,
+              required: true,
+            },
+          ],
+        },
+        context: {
+          paperclipWorkspace: { cwd: workspace, agentHome },
+        },
+        authToken: "run-jwt-token",
+        onLog: async (_stream, chunk) => {
+          logs.push(chunk);
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(logs.join("")).toContain("Warning: could not sync Letta agent name");
+      expect(logs.join("")).toContain("http://127.0.0.1:8283");
+    } finally {
+      globalThis.fetch = originalFetch;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 });

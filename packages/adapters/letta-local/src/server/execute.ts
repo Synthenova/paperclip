@@ -36,6 +36,11 @@ function normalizeNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function normalizeBaseUrl(value: string | null): string {
+  if (!value) return "https://api.letta.com";
+  return value.endsWith("/") ? value.slice(0, -1) : value;
+}
+
 function buildConfigSignature(input: {
   model: string;
   systemPromptPreset: typeof DEFAULT_SYSTEM_PROMPT_PRESET;
@@ -100,10 +105,31 @@ async function readLettaApiKeyFromSettings(homeDir: string | null): Promise<stri
   }
 }
 
+async function readLettaBaseUrlFromSettings(homeDir: string | null): Promise<string | null> {
+  if (!homeDir) return null;
+  for (const filename of ["settings.local.json", "settings.json"]) {
+    try {
+      const raw = await fs.readFile(path.join(homeDir, ".letta", filename), "utf8");
+      const parsed = JSON.parse(raw) as { env?: { LETTA_BASE_URL?: unknown } };
+      const value = normalizeNonEmptyString(parsed.env?.LETTA_BASE_URL);
+      if (value) return normalizeBaseUrl(value);
+    } catch {
+      // Ignore missing or unreadable settings files.
+    }
+  }
+  return null;
+}
+
 async function resolveLettaApiAuthToken(env: Record<string, string>): Promise<string | null> {
   const envToken = normalizeNonEmptyString(env.LETTA_API_KEY);
   if (envToken) return envToken;
   return readLettaApiKeyFromSettings(normalizeNonEmptyString(env.HOME));
+}
+
+async function resolveLettaBaseUrl(env: Record<string, string>): Promise<string> {
+  const envBaseUrl = normalizeNonEmptyString(env.LETTA_BASE_URL);
+  if (envBaseUrl) return normalizeBaseUrl(envBaseUrl);
+  return (await readLettaBaseUrlFromSettings(normalizeNonEmptyString(env.HOME))) ?? "https://api.letta.com";
 }
 
 async function syncLettaAgentName(input: {
@@ -123,25 +149,38 @@ async function syncLettaAgentName(input: {
     );
     return;
   }
+  const baseUrl = await resolveLettaBaseUrl(input.env);
 
-  const response = await fetch(`https://api.letta.com/v1/agents/${input.agentId}`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${authToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ name: desiredName }),
-  });
+  try {
+    const response = await fetch(new URL(`/v1/agents/${input.agentId}`, baseUrl), {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name: desiredName }),
+    });
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Failed to sync Letta agent name (${response.status}): ${body}`);
+    if (!response.ok) {
+      const body = await response.text();
+      await input.onLog(
+        "stdout",
+        `[paperclip] Warning: could not sync Letta agent name for ${input.agentId} (${response.status}) via ${baseUrl}: ${body}\n`,
+      );
+      return;
+    }
+
+    await input.onLog(
+      "stdout",
+      `[paperclip] Synced Letta agent ${input.agentId} name to "${desiredName}".\n`,
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    await input.onLog(
+      "stdout",
+      `[paperclip] Warning: could not sync Letta agent name for ${input.agentId} via ${baseUrl}: ${reason}\n`,
+    );
   }
-
-  await input.onLog(
-    "stdout",
-    `[paperclip] Synced Letta agent ${input.agentId} name to "${desiredName}".\n`,
-  );
 }
 
 function serializeEvent(event: unknown) {

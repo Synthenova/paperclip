@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   agentsApi,
   type AgentKey,
+  type AgentChatThread,
   type ClaudeLoginResult,
   type AgentPermissionUpdate,
 } from "../api/agents";
@@ -223,9 +224,10 @@ function scrollToContainerBottom(container: ScrollContainer, behavior: ScrollBeh
   container.scrollTo({ top: container.scrollHeight, behavior });
 }
 
-type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "runs" | "budget";
+type AgentDetailView = "dashboard" | "chat" | "instructions" | "configuration" | "skills" | "runs" | "budget";
 
 function parseAgentDetailView(value: string | null): AgentDetailView {
+  if (value === "chat") return "chat";
   if (value === "instructions" || value === "prompts") return "instructions";
   if (value === "configure" || value === "configuration") return "configuration";
   if (value === "skills") return "skills";
@@ -668,6 +670,10 @@ export function AgentDetail() {
     queryFn: () => heartbeatsApi.list(resolvedCompanyId!, agent?.id ?? undefined),
     enabled: !!resolvedCompanyId && !!agent?.id && shouldLoadHeartbeats,
   });
+  const visibleHeartbeats = useMemo(
+    () => (heartbeats ?? []).filter((run) => !isChatScopedRun(run)),
+    [heartbeats],
+  );
 
   const { data: allIssues } = useQuery({
     queryKey: [...queryKeys.issues.list(resolvedCompanyId!), "participant-agent", resolvedAgentId ?? "__none__"],
@@ -725,8 +731,8 @@ export function AgentDetail() {
     } satisfies BudgetPolicySummary;
   }, [agent, budgetOverview?.policies, resolvedCompanyId, routeAgentRef]);
   const mobileLiveRun = useMemo(
-    () => (heartbeats ?? []).find((r) => r.status === "running" || r.status === "queued") ?? null,
-    [heartbeats],
+    () => visibleHeartbeats.find((r) => r.status === "running" || r.status === "queued") ?? null,
+    [visibleHeartbeats],
   );
 
   useEffect(() => {
@@ -738,7 +744,9 @@ export function AgentDetail() {
       return;
     }
     const canonicalTab =
-      activeView === "instructions"
+      activeView === "chat"
+        ? "chat"
+        : activeView === "instructions"
         ? "instructions"
         : activeView === "configuration"
           ? "configuration"
@@ -861,6 +869,8 @@ export function AgentDetail() {
       if (urlRunId) {
         crumbs.push({ label: "Runs", href: `/agents/${canonicalAgentRef}/runs` });
         crumbs.push({ label: `Run ${urlRunId.slice(0, 8)}` });
+      } else if (activeView === "chat") {
+        crumbs.push({ label: "Chat" });
       } else if (activeView === "instructions") {
         crumbs.push({ label: "Instructions" });
       } else if (activeView === "configuration") {
@@ -1006,6 +1016,7 @@ export function AgentDetail() {
           <PageTabBar
             items={[
               { value: "dashboard", label: "Dashboard" },
+              { value: "chat", label: "Chat" },
               { value: "instructions", label: "Instructions" },
               { value: "skills", label: "Skills" },
               { value: "configuration", label: "Configuration" },
@@ -1085,10 +1096,18 @@ export function AgentDetail() {
       {activeView === "dashboard" && (
         <AgentOverview
           agent={agent}
-          runs={heartbeats ?? []}
+          runs={visibleHeartbeats}
           assignedIssues={assignedIssues}
           runtimeState={runtimeState}
           agentId={agent.id}
+          agentRouteId={canonicalAgentRef}
+        />
+      )}
+
+      {activeView === "chat" && resolvedCompanyId && (
+        <ChatTab
+          agent={agent}
+          companyId={resolvedCompanyId}
           agentRouteId={canonicalAgentRef}
         />
       )}
@@ -1126,7 +1145,7 @@ export function AgentDetail() {
 
       {activeView === "runs" && (
         <RunsTab
-          runs={heartbeats ?? []}
+          runs={visibleHeartbeats}
           companyId={resolvedCompanyId!}
           agentId={agent.id}
           agentRouteId={canonicalAgentRef}
@@ -2827,6 +2846,245 @@ function AgentSkillsTab({
 
 /* ---- Runs Tab ---- */
 
+function chatMessageFromRun(run: HeartbeatRun): string {
+  const context = asRecord(run.contextSnapshot);
+  const message = context?.chatUserMessage;
+  return typeof message === "string" ? message : "";
+}
+
+function isChatScopedRun(run: HeartbeatRun): boolean {
+  const context = asRecord(run.contextSnapshot);
+  const taskKey = context?.taskKey;
+  return typeof taskKey === "string" && taskKey.startsWith("chat:");
+}
+
+function ChatTab({
+  agent,
+  companyId,
+  agentRouteId,
+}: {
+  agent: AgentDetailRecord;
+  companyId: string;
+  agentRouteId: string;
+}) {
+  const queryClient = useQueryClient();
+  const { isMobile } = useSidebar();
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [isComposingNewChat, setIsComposingNewChat] = useState(false);
+  const [message, setMessage] = useState("");
+  const [mobileShowThreads, setMobileShowThreads] = useState(false);
+
+  const { data: threads = [], isLoading: threadsLoading } = useQuery({
+    queryKey: queryKeys.agents.chatThreads(agent.id),
+    queryFn: () => agentsApi.chatThreads(agent.id, companyId),
+    enabled: Boolean(companyId),
+  });
+
+  useEffect(() => {
+    if (isComposingNewChat) return;
+    if (threads.length === 0) {
+      setSelectedThreadId(null);
+      return;
+    }
+    if (selectedThreadId && threads.some((thread) => thread.threadId === selectedThreadId)) return;
+    setSelectedThreadId(threads[0]!.threadId);
+  }, [isComposingNewChat, selectedThreadId, threads]);
+
+  const selectedThread = threads.find((thread) => thread.threadId === selectedThreadId) ?? null;
+  const { data: runs = [], isLoading: runsLoading } = useQuery({
+    queryKey: queryKeys.agents.chatRuns(agent.id, selectedThreadId ?? "__none__"),
+    queryFn: () => agentsApi.chatRuns(agent.id, selectedThreadId!, companyId),
+    enabled: Boolean(selectedThreadId && companyId && !isComposingNewChat),
+  });
+
+  const sendMessage = useMutation({
+    mutationFn: async () =>
+      agentsApi.sendChatMessage(
+        agent.id,
+        { threadId: isComposingNewChat ? undefined : (selectedThreadId ?? undefined), message },
+        companyId,
+      ),
+    onSuccess: async (result) => {
+      setMessage("");
+      setIsComposingNewChat(false);
+      setSelectedThreadId(result.threadId);
+      setMobileShowThreads(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.chatThreads(agent.id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.chatRuns(agent.id, result.threadId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.heartbeats(companyId, agent.id) }),
+      ]);
+    },
+  });
+
+  const resetChatSession = useMutation({
+    mutationFn: async (threadId: string) => agentsApi.resetChatSession(agent.id, threadId, companyId),
+    onSuccess: async (_, threadId) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.chatThreads(agent.id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.chatRuns(agent.id, threadId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.runtimeState(agent.id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.agents.taskSessions(agent.id) }),
+      ]);
+    },
+  });
+
+  const canSend = message.trim().length > 0 && !sendMessage.isPending;
+  const showComposerIntro = isComposingNewChat || (!selectedThread && threads.length === 0);
+
+  return (
+    <div className={cn("flex gap-4", isMobile && "flex-col")}>
+      {(!isMobile || mobileShowThreads) && (
+        <div className={cn("shrink-0 rounded-lg border border-border bg-card", isMobile ? "w-full" : "w-80")}>
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <div>
+              <h3 className="text-sm font-medium">Chat History</h3>
+              <p className="text-xs text-muted-foreground">Runs grouped by resumable adapter session.</p>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                setIsComposingNewChat(true);
+                setSelectedThreadId(null);
+                setMessage("");
+                if (isMobile) setMobileShowThreads(false);
+              }}
+            >
+              New chat
+            </Button>
+          </div>
+          <div className="max-h-[44rem] overflow-y-auto">
+            {threadsLoading ? (
+              <div className="px-4 py-3 text-sm text-muted-foreground">Loading chats...</div>
+            ) : threads.length === 0 ? (
+              <div className="px-4 py-3 text-sm text-muted-foreground">No chats yet.</div>
+            ) : (
+              threads.map((thread: AgentChatThread) => {
+                const isSelected = !isComposingNewChat && thread.threadId === selectedThreadId;
+                return (
+                  <button
+                    key={thread.threadId}
+                    type="button"
+                    className={cn(
+                      "flex w-full flex-col gap-1 border-b border-border px-4 py-3 text-left transition-colors",
+                      isSelected ? "bg-accent/50" : "hover:bg-accent/30",
+                    )}
+                    onClick={() => {
+                      setIsComposingNewChat(false);
+                      setSelectedThreadId(thread.threadId);
+                      if (isMobile) setMobileShowThreads(false);
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="truncate text-sm font-medium">{thread.title}</span>
+                      <span className="shrink-0 text-[11px] text-muted-foreground">{relativeTime(thread.updatedAt)}</span>
+                    </div>
+                    <p className="line-clamp-2 text-xs text-muted-foreground">{thread.preview || "No preview yet."}</p>
+                    {thread.lastError && (
+                      <p className="truncate text-[11px] text-destructive">{thread.lastError}</p>
+                    )}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className={cn("min-w-0 flex-1 space-y-4", isMobile && mobileShowThreads && "hidden")}>
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              {isMobile && (
+                <Button type="button" variant="outline" size="sm" onClick={() => setMobileShowThreads(true)}>
+                  Chats
+                </Button>
+              )}
+              <h3 className="truncate text-sm font-medium">
+                {isComposingNewChat ? "New chat" : selectedThread?.title ?? "Direct chat"}
+              </h3>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Working directory is always the agent workspace for direct chat.
+            </p>
+          </div>
+          {selectedThread && !isComposingNewChat && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => resetChatSession.mutate(selectedThread.threadId)}
+              disabled={resetChatSession.isPending}
+            >
+              {resetChatSession.isPending ? "Resetting..." : "Reset session"}
+            </Button>
+          )}
+        </div>
+
+        <div className="space-y-4">
+          {showComposerIntro ? (
+            <div className="rounded-lg border border-dashed border-border px-4 py-8 text-sm text-muted-foreground">
+              Send a message to start a new direct chat with {agent.name}.
+            </div>
+          ) : runsLoading ? (
+            <div className="rounded-lg border border-border px-4 py-8 text-sm text-muted-foreground">
+              Loading conversation...
+            </div>
+          ) : runs.length === 0 ? (
+            <div className="rounded-lg border border-border px-4 py-8 text-sm text-muted-foreground">
+              No runs in this chat yet.
+            </div>
+          ) : (
+            runs.map((run) => (
+              <div key={run.id} className="space-y-3">
+                <div className="ml-auto max-w-3xl rounded-2xl bg-accent px-4 py-3">
+                  <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    You
+                  </div>
+                  <div className="whitespace-pre-wrap text-sm">{chatMessageFromRun(run) || "(empty message)"}</div>
+                </div>
+                <div className="max-w-full">
+                  <RunDetail run={run} agentRouteId={agentRouteId} adapterType={agent.adapterType} transcriptOnly />
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-4">
+          <label className="mb-2 block text-xs font-medium text-muted-foreground">Message</label>
+          <textarea
+            value={message}
+            onChange={(event) => setMessage(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                if (canSend) sendMessage.mutate();
+              }
+            }}
+            placeholder={`Message ${agent.name}...`}
+            className="min-h-28 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+          />
+          {sendMessage.isError && (
+            <p className="mt-2 text-xs text-destructive">
+              {sendMessage.error instanceof Error ? sendMessage.error.message : "Failed to send chat message"}
+            </p>
+          )}
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">
+              Press Enter to send. Shift+Enter adds a new line.
+            </p>
+            <Button type="button" onClick={() => sendMessage.mutate()} disabled={!canSend}>
+              {sendMessage.isPending ? "Sending..." : "Send"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelected: boolean; agentId: string }) {
   const statusInfo = runStatusIcons[run.status] ?? { icon: Clock, color: "text-neutral-400" };
   const StatusIcon = statusInfo.icon;
@@ -2960,7 +3218,19 @@ function RunsTab({
 
 /* ---- Run Detail (expanded) ---- */
 
-function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }: { run: HeartbeatRun; agentRouteId: string; adapterType: string; adapterConfig: Record<string, unknown> }) {
+function RunDetail({
+  run: initialRun,
+  agentRouteId,
+  adapterType,
+  adapterConfig,
+  transcriptOnly = false,
+}: {
+  run: HeartbeatRun;
+  agentRouteId: string;
+  adapterType: string;
+  adapterConfig: Record<string, unknown>;
+  transcriptOnly?: boolean;
+}) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { data: hydratedRun } = useQuery({
@@ -3106,8 +3376,15 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
   const hasMetrics = metrics.input > 0 || metrics.output > 0 || metrics.cached > 0 || metrics.cost > 0;
   const hasSession = !!(run.sessionIdBefore || run.sessionIdAfter);
   const sessionChanged = run.sessionIdBefore && run.sessionIdAfter && run.sessionIdBefore !== run.sessionIdAfter;
-  const sessionId = run.sessionIdAfter || run.sessionIdBefore;
   const hasNonZeroExit = run.exitCode !== null && run.exitCode !== 0;
+
+  if (transcriptOnly) {
+    return (
+      <div className="min-w-0">
+        <LogViewer run={run} adapterType={adapterType} transcriptOnly />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 min-w-0">
@@ -3393,7 +3670,15 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
 
 /* ---- Log Viewer ---- */
 
-function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: string }) {
+function LogViewer({
+  run,
+  adapterType,
+  transcriptOnly = false,
+}: {
+  run: HeartbeatRun;
+  adapterType: string;
+  transcriptOnly?: boolean;
+}) {
   const [events, setEvents] = useState<HeartbeatRunEvent[]>([]);
   const [logLines, setLogLines] = useState<Array<{ ts: string; stream: "stdout" | "stderr" | "system"; chunk: string }>>([]);
   const [loading, setLoading] = useState(true);
@@ -3805,11 +4090,13 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
 
   return (
     <div className="space-y-3">
-      <WorkspaceOperationsSection
-        operations={workspaceOperations}
-        censorUsernameInLogs={censorUsernameInLogs}
-      />
-      {adapterInvokePayload && (
+      {!transcriptOnly && (
+        <WorkspaceOperationsSection
+          operations={workspaceOperations}
+          censorUsernameInLogs={censorUsernameInLogs}
+        />
+      )}
+      {!transcriptOnly && adapterInvokePayload && (
         <RunInvocationCard payload={adapterInvokePayload} censorUsernameInLogs={censorUsernameInLogs} />
       )}
 

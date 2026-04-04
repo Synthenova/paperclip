@@ -115,6 +115,13 @@ export const wakeAgentSchema = z.object({
 
 export type WakeAgent = z.infer<typeof wakeAgentSchema>;
 
+export const sendAgentChatMessageSchema = z.object({
+  threadId: z.string().uuid().optional(),
+  message: z.string().trim().min(1),
+});
+
+export type SendAgentChatMessage = z.infer<typeof sendAgentChatMessageSchema>;
+
 export const resetAgentSessionSchema = z.object({
   taskKey: z.string().min(1).optional().nullable(),
 });

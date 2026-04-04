@@ -62,6 +62,29 @@ export interface AgentPermissionUpdate {
   canAssignTasks: boolean;
 }
 
+export interface AgentChatThread {
+  id: string;
+  companyId: string;
+  agentId: string;
+  adapterType: string;
+  taskKey: string;
+  threadId: string;
+  title: string;
+  preview: string;
+  sessionParamsJson: Record<string, unknown> | null;
+  sessionDisplayId: string | null;
+  lastRunId: string | null;
+  lastError: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AgentChatSendResponse {
+  threadId: string;
+  taskKey: string;
+  run: HeartbeatRun;
+}
+
 function withCompanyScope(path: string, companyId?: string) {
   if (!companyId) return path;
   const separator = path.includes("?") ? "&" : "?";
@@ -161,6 +184,14 @@ export const agentsApi = {
     api.get<AgentRuntimeState>(agentPath(id, companyId, "/runtime-state")),
   taskSessions: (id: string, companyId?: string) =>
     api.get<AgentTaskSession[]>(agentPath(id, companyId, "/task-sessions")),
+  chatThreads: (id: string, companyId?: string) =>
+    api.get<AgentChatThread[]>(agentPath(id, companyId, "/chat/threads")),
+  chatRuns: (id: string, threadId: string, companyId?: string) =>
+    api.get<HeartbeatRun[]>(agentPath(id, companyId, `/chat/threads/${encodeURIComponent(threadId)}/runs`)),
+  sendChatMessage: (id: string, data: { threadId?: string; message: string }, companyId?: string) =>
+    api.post<AgentChatSendResponse>(agentPath(id, companyId, "/chat/send"), data),
+  resetChatSession: (id: string, threadId: string, companyId?: string) =>
+    api.post<void>(agentPath(id, companyId, `/chat/threads/${encodeURIComponent(threadId)}/reset-session`), {}),
   resetSession: (id: string, taskKey?: string | null, companyId?: string) =>
     api.post<void>(agentPath(id, companyId, "/runtime-state/reset-session"), { taskKey: taskKey ?? null }),
   adapterModels: (companyId: string, type: string) =>
