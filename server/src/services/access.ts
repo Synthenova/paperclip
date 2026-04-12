@@ -1,5 +1,6 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
+import { authUsers } from "@paperclipai/db";
 import {
   companyMemberships,
   instanceUserRoles,
@@ -81,6 +82,29 @@ export function accessService(db: Db) {
       .from(companyMemberships)
       .where(eq(companyMemberships.companyId, companyId))
       .orderBy(sql`${companyMemberships.createdAt} desc`);
+  }
+
+  async function listCompanyUsers(companyId: string) {
+    return db
+      .select({
+        membershipId: companyMemberships.id,
+        id: authUsers.id,
+        name: authUsers.name,
+        email: authUsers.email,
+        membershipRole: companyMemberships.membershipRole,
+        status: companyMemberships.status,
+      })
+      .from(companyMemberships)
+      .innerJoin(authUsers, eq(companyMemberships.principalId, authUsers.id))
+      .where(
+        and(
+          eq(companyMemberships.companyId, companyId),
+          eq(companyMemberships.principalType, "user"),
+          eq(companyMemberships.status, "active"),
+          sql`${authUsers.id} <> 'local-board'`,
+        ),
+      )
+      .orderBy(authUsers.name, authUsers.email);
   }
 
   async function listActiveUserMemberships(companyId: string) {
@@ -366,6 +390,7 @@ export function accessService(db: Db) {
     getMembership,
     ensureMembership,
     listMembers,
+    listCompanyUsers,
     listActiveUserMemberships,
     copyActiveUserMemberships,
     setMemberPermissions,

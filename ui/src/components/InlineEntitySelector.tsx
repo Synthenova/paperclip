@@ -7,6 +7,7 @@ export interface InlineEntityOption {
   id: string;
   label: string;
   searchText?: string;
+  group?: string;
 }
 
 interface InlineEntitySelectorProps {
@@ -68,6 +69,21 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
     }, [allOptions, query]);
 
     const currentOption = options.find((option) => option.id === value) ?? null;
+    const groupedOptions = useMemo(() => {
+      const groups: Array<{ label: string | null; options: InlineEntityOption[] }> = [];
+      const byGroup = new Map<string | null, InlineEntityOption[]>();
+      for (const option of filteredOptions) {
+        const key = option.group ?? null;
+        const existing = byGroup.get(key);
+        if (existing) {
+          existing.push(option);
+        } else {
+          byGroup.set(key, [option]);
+          groups.push({ label: key, options: byGroup.get(key) ?? [] });
+        }
+      }
+      return groups;
+    }, [filteredOptions]);
 
     useEffect(() => {
       if (!open) return;
@@ -183,25 +199,35 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
             {filteredOptions.length === 0 ? (
               <p className="px-2 py-2 text-xs text-muted-foreground">{emptyMessage}</p>
             ) : (
-              filteredOptions.map((option, index) => {
-                const isSelected = option.id === value;
-                const isHighlighted = index === highlightedIndex;
-                return (
-                  <button
-                    key={option.id || "__none__"}
-                    type="button"
-                    className={cn(
-                      "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm touch-manipulation",
-                      isHighlighted && "bg-accent",
-                    )}
-                    onMouseEnter={() => setHighlightedIndex(index)}
-                    onClick={() => commitSelection(index, true)}
-                  >
-                    {renderOption ? renderOption(option, isSelected) : <span className="truncate">{option.label}</span>}
-                    <Check className={cn("ml-auto h-3.5 w-3.5 text-muted-foreground", isSelected ? "opacity-100" : "opacity-0")} />
-                  </button>
-                );
-              })
+              groupedOptions.map((group, groupIndex) => (
+                <div key={group.label ?? `__ungrouped_${groupIndex}` }>
+                  {group.label && (
+                    <div className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">
+                      {group.label}
+                    </div>
+                  )}
+                  {group.options.map((option) => {
+                    const index = filteredOptions.findIndex((candidate) => candidate.id === option.id);
+                    const isSelected = option.id === value;
+                    const isHighlighted = index === highlightedIndex;
+                    return (
+                      <button
+                        key={option.id || "__none__"}
+                        type="button"
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm touch-manipulation",
+                          isHighlighted && "bg-accent",
+                        )}
+                        onMouseEnter={() => setHighlightedIndex(index)}
+                        onClick={() => commitSelection(index, true)}
+                      >
+                        {renderOption ? renderOption(option, isSelected) : <span className="truncate">{option.label}</span>}
+                        <Check className={cn("ml-auto h-3.5 w-3.5 text-muted-foreground", isSelected ? "opacity-100" : "opacity-0")} />
+                      </button>
+                    );
+                  })}
+                </div>
+              ))
             )}
           </div>
         </PopoverContent>

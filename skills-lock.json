@@ -6,10 +6,25 @@
       "sourceType": "github",
       "computedHash": "14f914f59c894431d0837a6c6ac517a9d95f3b08f5c8638d64f60b68556aa9f6"
     },
+    "mcp2cli": {
+      "source": "knowsuchagency/mcp2cli",
+      "sourceType": "github",
+      "computedHash": "934c5748dc44f94195a97a5193b606f481f0e83cc2874d4427d3303a5c52339f"
+    },
     "paperclip-create-plugin": {
       "source": "paperclipai/paperclip",
       "sourceType": "github",
       "computedHash": "27d7a689e0b60d34d920a9b2f9fb423eaa4652e4ad897f850c5371a437fa1538"
+    },
+    "skill-creator": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "b122f4d1e91aa1d83027e050b5b37c3156203ee85458d7b1360bc48167c9e02a"
+    },
+    "steel-orchestrator-remote-control": {
+      "source": "Synthenova/skills",
+      "sourceType": "github",
+      "computedHash": "b3f9bca8826218f17b61ee5eea423ab9e6dd533b9f3b67f7b1d8808773d85c8e"
     }
   }
 }

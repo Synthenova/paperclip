@@ -8,16 +8,17 @@ import { issuesApi } from "../api/issues";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { projectsApi } from "../api/projects";
 import { agentsApi } from "../api/agents";
+import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
 import { useProjectOrder } from "../hooks/useProjectOrder";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { buildExecutionPolicy } from "../lib/issue-execution-policy";
+import { buildAssigneeOptions, buildMentionOptions } from "../lib/people-directory";
 import { useToast } from "../context/ToastContext";
 import {
   assigneeValueFromSelection,
-  currentUserAssigneeOption,
   parseAssigneeValue,
 } from "../lib/assignees";
 import {
@@ -51,6 +52,7 @@ import {
   X,
   Eye,
   ShieldCheck,
+  User,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { extractProviderIdWithFallback } from "../lib/model-utils";
@@ -329,6 +331,15 @@ export function NewIssueDialog() {
     queryFn: () => agentsApi.list(effectiveCompanyId!),
     enabled: !!effectiveCompanyId && newIssueOpen,
   });
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+  });
+  const { data: members } = useQuery({
+    queryKey: queryKeys.access.users(effectiveCompanyId!),
+    queryFn: () => accessApi.listUsers(effectiveCompanyId!),
+    enabled: !!effectiveCompanyId && newIssueOpen && session !== null && session !== undefined,
+  });
 
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(effectiveCompanyId!),
@@ -348,10 +359,6 @@ export function NewIssueDialog() {
         reuseEligible: true,
       }),
     enabled: Boolean(effectiveCompanyId) && newIssueOpen && Boolean(projectId),
-  });
-  const { data: session } = useQuery({
-    queryKey: queryKeys.auth.session,
-    queryFn: () => authApi.getSession(),
   });
   const { data: experimentalSettings } = useQuery({
     queryKey: queryKeys.instance.experimentalSettings,
@@ -378,31 +385,15 @@ export function NewIssueDialog() {
   const supportsAssigneeOverrides = Boolean(
     assigneeAdapterType && ISSUE_OVERRIDE_ADAPTER_TYPES.has(assigneeAdapterType),
   );
-  const mentionOptions = useMemo<MentionOption[]>(() => {
-    const options: MentionOption[] = [];
-    const activeAgents = [...(agents ?? [])]
-      .filter((agent) => agent.status !== "terminated")
-      .sort((a, b) => a.name.localeCompare(b.name));
-    for (const agent of activeAgents) {
-      options.push({
-        id: `agent:${agent.id}`,
-        name: agent.name,
-        kind: "agent",
-        agentId: agent.id,
-        agentIcon: agent.icon,
-      });
-    }
-    for (const project of orderedProjects) {
-      options.push({
-        id: `project:${project.id}`,
-        name: project.name,
-        kind: "project",
-        projectId: project.id,
-        projectColor: project.color,
-      });
-    }
-    return options;
-  }, [agents, orderedProjects]);
+  const mentionOptions = useMemo<MentionOption[]>(
+    () =>
+      buildMentionOptions({
+        members,
+        agents,
+        projects: orderedProjects,
+      }),
+    [agents, members, orderedProjects],
+  );
 
   const { data: assigneeAdapterModels } = useQuery({
     queryKey:
@@ -822,6 +813,9 @@ export function NewIssueDialog() {
   const currentAssignee = selectedAssigneeAgentId
     ? (agents ?? []).find((a) => a.id === selectedAssigneeAgentId)
     : null;
+  const currentAssigneeUser = selectedAssigneeUserId
+    ? (members ?? []).find((member) => member.id === selectedAssigneeUserId) ?? null
+    : null;
   const currentProject = orderedProjects.find((project) => project.id === projectId);
   const currentProjectExecutionWorkspacePolicy =
     experimentalSettings?.enableIsolatedWorkspaces === true
@@ -866,18 +860,20 @@ export function NewIssueDialog() {
       : ISSUE_THINKING_EFFORT_OPTIONS.claude_local;
   const recentAssigneeIds = useMemo(() => getRecentAssigneeIds(), [newIssueOpen]);
   const assigneeOptions = useMemo<InlineEntityOption[]>(
-    () => [
-      ...currentUserAssigneeOption(currentUserId),
-      ...sortAgentsByRecency(
+    () => {
+      const humanOptions = buildAssigneeOptions(members, []).filter((option) => option.group === "Human");
+      const agentOptions = sortAgentsByRecency(
         (agents ?? []).filter((agent) => agent.status !== "terminated"),
         recentAssigneeIds,
       ).map((agent) => ({
         id: assigneeValueFromSelection({ assigneeAgentId: agent.id }),
         label: agent.name,
-        searchText: `${agent.name} ${agent.role} ${agent.title ?? ""}`,
-      })),
-    ],
-    [agents, currentUserId, recentAssigneeIds],
+        searchText: `${agent.name} ${agent.role} ${agent.title ?? ""}`.trim(),
+        group: "Agents",
+      }));
+      return [...humanOptions, ...agentOptions];
+    },
+    [agents, members, recentAssigneeIds],
   );
   const projectOptions = useMemo<InlineEntityOption[]>(
     () =>
@@ -1132,6 +1128,11 @@ export function NewIssueDialog() {
                         <AgentIcon icon={currentAssignee.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                         <span className="truncate">{option.label}</span>
                       </>
+                    ) : currentAssigneeUser ? (
+                      <>
+                        <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{option.label}</span>
+                      </>
                     ) : (
                       <span className="truncate">{option.label}</span>
                     )
@@ -1141,12 +1142,17 @@ export function NewIssueDialog() {
                 }
                 renderOption={(option) => {
                   if (!option.id) return <span className="truncate">{option.label}</span>;
-                  const assignee = parseAssigneeValue(option.id).assigneeAgentId
-                    ? (agents ?? []).find((agent) => agent.id === parseAssigneeValue(option.id).assigneeAgentId)
+                  const parsedAssignee = parseAssigneeValue(option.id);
+                  const assignee = parsedAssignee.assigneeAgentId
+                    ? (agents ?? []).find((agent) => agent.id === parsedAssignee.assigneeAgentId)
+                    : null;
+                  const assigneeUser = parsedAssignee.assigneeUserId
+                    ? (members ?? []).find((member) => member.id === parsedAssignee.assigneeUserId)
                     : null;
                   return (
                     <>
                       {assignee ? <AgentIcon icon={assignee.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
+                      {assigneeUser ? <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
                       <span className="truncate">{option.label}</span>
                     </>
                   );

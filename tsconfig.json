@@ -11,6 +11,7 @@
     { "path": "./packages/adapters/cursor-local" },
     { "path": "./packages/adapters/droid-local" },
     { "path": "./packages/adapters/openclaw-gateway" },
+    { "path": "./packages/adapters/claw-local" },
     { "path": "./packages/adapters/opencode-local" },
     { "path": "./packages/adapters/pi-local" },
     { "path": "./server" },

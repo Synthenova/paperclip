@@ -21,6 +21,15 @@ export interface CompanyMembership {
   updatedAt: Date;
 }
 
+export interface CompanyMemberDirectoryEntry {
+  membershipId: string;
+  id: string;
+  name: string;
+  email: string | null;
+  membershipRole: string | null;
+  status: MembershipStatus;
+}
+
 export interface PrincipalPermissionGrant {
   id: string;
   companyId: string;

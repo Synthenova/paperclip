@@ -4,6 +4,8 @@ import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
 import { projectsApi } from "../api/projects";
 import { agentsApi } from "../api/agents";
+import { accessApi } from "../api/access";
+import { authApi } from "../api/auth";
 import { goalsApi } from "../api/goals";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
@@ -36,6 +38,7 @@ import { cn } from "../lib/utils";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
 import { StatusBadge } from "./StatusBadge";
 import { ChoosePathButton } from "./PathInstructionsModal";
+import { buildMentionOptions } from "../lib/people-directory";
 
 const projectStatuses = [
   { value: "backlog", label: "Backlog" },
@@ -74,23 +77,23 @@ export function NewProjectDialog() {
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId && newProjectOpen,
   });
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+  });
+  const { data: members } = useQuery({
+    queryKey: queryKeys.access.users(selectedCompanyId!),
+    queryFn: () => accessApi.listUsers(selectedCompanyId!),
+    enabled: !!selectedCompanyId && newProjectOpen && session !== null && session !== undefined,
+  });
 
   const mentionOptions = useMemo<MentionOption[]>(() => {
-    const options: MentionOption[] = [];
-    const activeAgents = [...(agents ?? [])]
-      .filter((agent) => agent.status !== "terminated")
-      .sort((a, b) => a.name.localeCompare(b.name));
-    for (const agent of activeAgents) {
-      options.push({
-        id: `agent:${agent.id}`,
-        name: agent.name,
-        kind: "agent",
-        agentId: agent.id,
-        agentIcon: agent.icon,
-      });
-    }
-    return options;
-  }, [agents]);
+    return buildMentionOptions({
+      members,
+      agents,
+      includeProjects: false,
+    });
+  }, [agents, members]);
 
   const createProject = useMutation({
     mutationFn: (data: Record<string, unknown>) =>

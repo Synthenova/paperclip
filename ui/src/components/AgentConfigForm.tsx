@@ -14,7 +14,6 @@ import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
 } from "@paperclipai/adapter-codex-local";
-import { DEFAULT_LETTA_LOCAL_MODEL } from "@paperclipai/adapter-letta-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
 import {
@@ -273,7 +272,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const NONLOCAL_TYPES = new Set(["process", "http", "openclaw_gateway"]);
   const isLocal = !NONLOCAL_TYPES.has(adapterType);
   const isHermesLocal = adapterType === "hermes_local";
-  const isLettaLocal = adapterType === "letta_local";
   const showLegacyWorkingDirectoryField =
     isLocal && shouldShowLegacyWorkingDirectoryField({ isCreate, adapterConfig: config });
   const uiAdapter = useMemo(() => getUIAdapter(adapterType), [adapterType]);
@@ -393,7 +391,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       : adapterType === "opencode_local"
         ? eff("adapterConfig", "variant", String(config.variant ?? ""))
       : eff("adapterConfig", "effort", String(config.effort ?? ""));
-  const showThinkingEffort = adapterType !== "gemini_local" && adapterType !== "letta_local";
+  const showThinkingEffort = adapterType !== "gemini_local";
   const codexSearchEnabled = adapterType === "codex_local"
     ? (isCreate ? Boolean(val!.search) : eff("adapterConfig", "search", Boolean(config.search)))
     : false;
@@ -548,8 +546,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                       nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
                       nextValues.dangerouslyBypassSandbox =
                         DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
-                    } else if (t === "letta_local") {
-                      nextValues.model = DEFAULT_LETTA_LOCAL_MODEL;
                     } else if (t === "gemini_local") {
                       nextValues.model = DEFAULT_GEMINI_LOCAL_MODEL;
                     } else if (t === "cursor") {
@@ -568,8 +564,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                         model:
                           t === "codex_local"
                             ? DEFAULT_CODEX_LOCAL_MODEL
-                            : t === "letta_local"
-                              ? DEFAULT_LETTA_LOCAL_MODEL
                             : t === "gemini_local"
                               ? DEFAULT_GEMINI_LOCAL_MODEL
                             : t === "cursor"
@@ -658,14 +652,13 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       </div>
 
       {/* ---- Permissions & Configuration ---- */}
-      {isLocal && (
+          {isLocal && (
         <div className={cn(!cards && "border-b border-border")}>
           {cards
             ? <h3 className="text-sm font-medium mb-3">Permissions &amp; Configuration</h3>
             : <div className="px-4 py-2 text-xs font-medium text-muted-foreground">Permissions &amp; Configuration</div>
           }
           <div className={cn(cards ? "border border-border rounded-lg p-4 space-y-3" : "px-4 pb-3 space-y-3")}>
-              {!isLettaLocal && (
               <Field label="Command" hint={help.localCommand}>
                 <DraftInput
                   value={
@@ -690,9 +683,8 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                       opencode_local: "opencode",
                     } as Record<string, string>)[adapterType] ?? adapterType.replace(/_local$/, "")
                   }
-                />
+                  />
               </Field>
-              )}
 
               <ModelDropdown
                 models={models}
@@ -778,7 +770,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               )}
               <uiAdapter.ConfigFields {...adapterFieldProps} />
 
-              {!isLettaLocal && (
               <Field label="Extra args (comma-separated)" hint={help.extraArgs}>
                 <DraftInput
                   value={
@@ -794,9 +785,8 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                   immediate
                   className={inputClass}
                   placeholder="e.g. --verbose, --foo=bar"
-                />
+                  />
               </Field>
-              )}
 
               <Field label="Environment variables" hint={help.envVars}>
                 <EnvVarEditor

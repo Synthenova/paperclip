@@ -168,6 +168,7 @@ export type { SidebarBadges } from "./sidebar-badges.js";
 export type { InboxDismissal } from "./inbox-dismissal.js";
 export type {
   CompanyMembership,
+  CompanyMemberDirectoryEntry,
   PrincipalPermissionGrant,
   Invite,
   JoinRequest,

@@ -25,7 +25,7 @@ import { getRunLogStore, type RunLogHandle } from "./run-log-store.js";
 import { getServerAdapter, runningProcesses } from "../adapters/index.js";
 import type { AdapterExecutionResult, AdapterInvocationMeta, AdapterSessionCodec, UsageSummary } from "../adapters/index.js";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
-import { parseObject, asBoolean, asNumber, appendWithCap, MAX_EXCERPT_BYTES } from "../adapters/utils.js";
+import { parseObject, asBoolean, asNumber, asString, appendWithCap, MAX_EXCERPT_BYTES } from "../adapters/utils.js";
 import { costService } from "./costs.js";
 import { trackAgentFirstHeartbeat } from "@paperclipai/shared/telemetry";
 import { getTelemetryClient } from "../telemetry.js";
@@ -2734,10 +2734,6 @@ export function heartbeatService(db: Db) {
     const taskSession = taskKey
       ? await getTaskSession(agent.companyId, agent.id, agent.adapterType, taskKey)
       : null;
-    const adapterSessionFallback =
-      agent.adapterType === "letta_local" && !taskSession
-        ? await getLatestTaskSessionForAdapter(agent.companyId, agent.id, agent.adapterType)
-        : null;
     const resetTaskSession = shouldResetTaskSessionForWake(context);
     const sessionResetReason = describeSessionResetReason(context);
     const taskSessionForRun = resetTaskSession ? null : taskSession;
@@ -2752,8 +2748,7 @@ export function heartbeatService(db: Db) {
     const previousSessionParams =
       explicitResumeSessionParams ??
       (explicitResumeSessionDisplayId ? { sessionId: explicitResumeSessionDisplayId } : null) ??
-      normalizeSessionParams(sessionCodec.deserialize(taskSessionForRun?.sessionParamsJson ?? null)) ??
-      normalizeSessionParams(sessionCodec.deserialize(adapterSessionFallback?.sessionParamsJson ?? null));
+      normalizeSessionParams(sessionCodec.deserialize(taskSessionForRun?.sessionParamsJson ?? null));
     const config = parseObject(agent.adapterConfig);
     const isChatRun = asBoolean(context.chatMode, false) || isChatTaskKey(taskKey);
     const requestedExecutionWorkspaceMode = isChatRun
@@ -3110,6 +3105,45 @@ export function heartbeatService(db: Db) {
       delete context.paperclipSessionHandoffMarkdown;
       delete context.paperclipSessionRotationReason;
       delete context.paperclipPreviousSessionId;
+    }
+
+    // For claw_local chat runs, build conversation history from previous runs
+    // since claw doesn't support native session resume in non-interactive mode
+    const isClawLocal = agent.adapterType === "claw_local";
+    if (isChatRun && isClawLocal && !context.paperclipSessionHandoffMarkdown && taskSessionForRun) {
+      const previousRuns = await db
+        .select({ id: heartbeatRuns.id, contextSnapshot: heartbeatRuns.contextSnapshot, resultJson: heartbeatRuns.resultJson })
+        .from(heartbeatRuns)
+        .where(
+          and(
+            eq(heartbeatRuns.companyId, agent.companyId),
+            eq(heartbeatRuns.agentId, agent.id),
+            sql`${heartbeatRuns.contextSnapshot} ->> 'taskKey' = ${taskKey}`,
+            sql`${heartbeatRuns.id} < ${run.id}`,
+          ),
+        )
+        .orderBy(asc(heartbeatRuns.createdAt))
+        .limit(10);
+
+      if (previousRuns.length > 0) {
+        const historyLines: string[] = [];
+        historyLines.push('## Conversation History');
+        historyLines.push('Continue from the previous conversation:');
+        historyLines.push('');
+        for (const prevRun of previousRuns) {
+          const ctx = parseObject(prevRun.contextSnapshot);
+          const userMessage = asString(ctx.chatUserMessage, "");
+          const resultJson = parseObject(prevRun.resultJson);
+          const assistantMessage = asString(resultJson.message, "") || asString(resultJson.result, "");
+          if (userMessage) {
+            historyLines.push(`**User:** ${userMessage}`);
+          }
+          if (assistantMessage) {
+            historyLines.push(`**Assistant:** ${assistantMessage}`);
+          }
+        }
+        context.paperclipSessionHandoffMarkdown = historyLines.join('\n');
+      }
     }
 
     const runtimeForAdapter = {

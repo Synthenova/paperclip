@@ -1,4 +1,4 @@
-import type { AgentAdapterType, JoinRequest } from "@paperclipai/shared";
+import type { AgentAdapterType, CompanyMemberDirectoryEntry, JoinRequest } from "@paperclipai/shared";
 import { api } from "./client";
 
 type InviteSummary = {
@@ -95,6 +95,8 @@ type CompanyInviteCreated = {
 };
 
 export const accessApi = {
+  listUsers: (companyId: string) => api.get<CompanyMemberDirectoryEntry[]>(`/companies/${companyId}/users`),
+
   createCompanyInvite: (
     companyId: string,
     input: {

@@ -56,6 +56,10 @@ const mockAgentsApi = vi.hoisted(() => ({
   adapterModels: vi.fn(),
 }));
 
+const mockAccessApi = vi.hoisted(() => ({
+  listUsers: vi.fn(),
+}));
+
 const mockAuthApi = vi.hoisted(() => ({
   getSession: vi.fn(),
 }));
@@ -96,6 +100,10 @@ vi.mock("../api/agents", () => ({
   agentsApi: mockAgentsApi,
 }));
 
+vi.mock("../api/access", () => ({
+  accessApi: mockAccessApi,
+}));
+
 vi.mock("../api/auth", () => ({
   authApi: mockAuthApi,
 }));
@@ -128,7 +136,6 @@ vi.mock("../lib/assignees", () => ({
     assigneeAgentId?: string;
     assigneeUserId?: string;
   }) => assigneeAgentId ? `agent:${assigneeAgentId}` : assigneeUserId ? `user:${assigneeUserId}` : "",
-  currentUserAssigneeOption: () => [],
   parseAssigneeValue: (value: string) => ({
     assigneeAgentId: value.startsWith("agent:") ? value.slice("agent:".length) : null,
     assigneeUserId: value.startsWith("user:") ? value.slice("user:".length) : null,
@@ -265,6 +272,16 @@ describe("NewIssueDialog", () => {
     ]);
     mockAgentsApi.list.mockResolvedValue([]);
     mockAgentsApi.adapterModels.mockResolvedValue([]);
+    mockAccessApi.listUsers.mockResolvedValue([
+      {
+        membershipId: "membership-1",
+        id: "user-1",
+        name: "Nirmal",
+        email: "nirmalvelu2000@gmail.com",
+        membershipRole: "member",
+        status: "active",
+      },
+    ]);
     mockAuthApi.getSession.mockResolvedValue({ user: { id: "user-1" } });
     mockAssetsApi.uploadImage.mockResolvedValue({ contentPath: "/uploads/asset.png" });
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });

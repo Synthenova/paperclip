@@ -3,11 +3,14 @@ import {
   buildAgentMentionHref,
   buildProjectMentionHref,
   buildSkillMentionHref,
+  buildUserMentionHref,
   extractAgentMentionIds,
   extractProjectMentionIds,
+  extractUserMentionIds,
   extractSkillMentionIds,
   parseAgentMentionHref,
   parseProjectMentionHref,
+  parseUserMentionHref,
   parseSkillMentionHref,
 } from "./project-mentions.js";
 
@@ -28,6 +31,15 @@ describe("project-mentions", () => {
       icon: "code",
     });
     expect(extractAgentMentionIds(`[@CodexCoder](${href})`)).toEqual(["agent-123"]);
+  });
+
+  it("round-trips user mentions with email metadata", () => {
+    const href = buildUserMentionHref("user-123", "nirmalvelu2000@gmail.com");
+    expect(parseUserMentionHref(href)).toEqual({
+      userId: "user-123",
+      email: "nirmalvelu2000@gmail.com",
+    });
+    expect(extractUserMentionIds(`[@Nirmal](${href})`)).toEqual(["user-123"]);
   });
 
   it("round-trips skill mentions with slug metadata", () => {

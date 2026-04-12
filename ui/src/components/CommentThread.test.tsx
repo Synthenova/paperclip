@@ -2,6 +2,7 @@
 
 import { act } from "react";
 import type { ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import type { Agent, Approval } from "@paperclipai/shared";
@@ -56,8 +57,41 @@ vi.mock("@/plugins/slots", () => ({
   PluginSlotOutlet: () => null,
 }));
 
+vi.mock("../api/auth", () => ({
+  authApi: {
+    getSession: vi.fn(async () => null),
+  },
+}));
+
+vi.mock("../api/access", () => ({
+  accessApi: {
+    listUsers: vi.fn(async () => []),
+  },
+}));
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+function renderWithQueryClient(node: ReactNode, container: HTMLDivElement) {
+  const root = createRoot(container);
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+      },
+    },
+  });
+
+  act(() => {
+    root.render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>{node}</MemoryRouter>
+      </QueryClientProvider>,
+    );
+  });
+
+  return { root, queryClient };
+}
 
 describe("CommentThread", () => {
   let container: HTMLDivElement;
@@ -89,7 +123,6 @@ describe("CommentThread", () => {
   });
 
   it("renders historical runs as timeline rows using the finished time", () => {
-    const root = createRoot(container);
     const agent: Agent = {
       id: "agent-1",
       companyId: "company-1",
@@ -115,25 +148,22 @@ describe("CommentThread", () => {
       updatedAt: new Date("2026-03-11T00:00:00.000Z"),
     };
 
-    act(() => {
-      root.render(
-        <MemoryRouter>
-          <CommentThread
-            comments={[]}
-            linkedRuns={[{
-              runId: "run-12345678abcd",
-              status: "succeeded",
-              agentId: "agent-1",
-              createdAt: "2026-03-11T07:00:00.000Z",
-              startedAt: "2026-03-11T08:00:00.000Z",
-              finishedAt: "2026-03-11T10:00:00.000Z",
-            }]}
-            agentMap={new Map([["agent-1", agent]])}
-            onAdd={async () => {}}
-          />
-        </MemoryRouter>,
-      );
-    });
+    const { root } = renderWithQueryClient(
+      <CommentThread
+        comments={[]}
+        linkedRuns={[{
+          runId: "run-12345678abcd",
+          status: "succeeded",
+          agentId: "agent-1",
+          createdAt: "2026-03-11T07:00:00.000Z",
+          startedAt: "2026-03-11T08:00:00.000Z",
+          finishedAt: "2026-03-11T10:00:00.000Z",
+        }]}
+        agentMap={new Map([["agent-1", agent]])}
+        onAdd={async () => {}}
+      />,
+      container,
+    );
 
     const runRow = container.querySelector("#run-run-12345678abcd") as HTMLDivElement | null;
     expect(runRow).not.toBeNull();
@@ -155,19 +185,14 @@ describe("CommentThread", () => {
   });
 
   it("replaces the composer with a warning when comments are disabled", () => {
-    const root = createRoot(container);
-
-    act(() => {
-      root.render(
-        <MemoryRouter>
-          <CommentThread
-            comments={[]}
-            composerDisabledReason="Workspace is closed."
-            onAdd={async () => {}}
-          />
-        </MemoryRouter>,
-      );
-    });
+    const { root } = renderWithQueryClient(
+      <CommentThread
+        comments={[]}
+        composerDisabledReason="Workspace is closed."
+        onAdd={async () => {}}
+      />,
+      container,
+    );
 
     expect(container.textContent).toContain("Workspace is closed.");
     expect(container.querySelector('textarea[aria-label="Comment editor"]')).toBeNull();
@@ -179,7 +204,6 @@ describe("CommentThread", () => {
   });
 
   it("renders linked approvals inline in the timeline", () => {
-    const root = createRoot(container);
     const agent: Agent = {
       id: "agent-1",
       companyId: "company-1",
@@ -222,20 +246,17 @@ describe("CommentThread", () => {
       updatedAt: new Date("2026-03-11T09:00:00.000Z"),
     };
 
-    act(() => {
-      root.render(
-        <MemoryRouter>
-          <CommentThread
-            comments={[]}
-            linkedApprovals={[approval]}
-            agentMap={new Map([["agent-1", agent]])}
-            onAdd={async () => {}}
-            onApproveApproval={async () => {}}
-            onRejectApproval={async () => {}}
-          />
-        </MemoryRouter>,
-      );
-    });
+    const { root } = renderWithQueryClient(
+      <CommentThread
+        comments={[]}
+        linkedApprovals={[approval]}
+        agentMap={new Map([["agent-1", agent]])}
+        onAdd={async () => {}}
+        onApproveApproval={async () => {}}
+        onRejectApproval={async () => {}}
+      />,
+      container,
+    );
 
     const approvalRow = container.querySelector("#approval-approval-1") as HTMLDivElement | null;
     expect(approvalRow).not.toBeNull();
@@ -250,27 +271,22 @@ describe("CommentThread", () => {
   });
 
   it("uses a larger copy control with feedback and a clipboard fallback", async () => {
-    const root = createRoot(container);
-
-    act(() => {
-      root.render(
-        <MemoryRouter>
-          <CommentThread
-            comments={[{
-              id: "comment-1",
-              companyId: "company-1",
-              issueId: "issue-1",
-              authorAgentId: null,
-              authorUserId: "user-1",
-              body: "Hello from the comment body",
-              createdAt: new Date("2026-03-11T11:00:00.000Z"),
-              updatedAt: new Date("2026-03-11T11:00:00.000Z"),
-            }]}
-            onAdd={async () => {}}
-          />
-        </MemoryRouter>,
-      );
-    });
+    const { root } = renderWithQueryClient(
+      <CommentThread
+        comments={[{
+          id: "comment-1",
+          companyId: "company-1",
+          issueId: "issue-1",
+          authorAgentId: null,
+          authorUserId: "user-1",
+          body: "Hello from the comment body",
+          createdAt: new Date("2026-03-11T11:00:00.000Z"),
+          updatedAt: new Date("2026-03-11T11:00:00.000Z"),
+        }]}
+        onAdd={async () => {}}
+      />,
+      container,
+    );
 
     const copyButton = Array.from(container.querySelectorAll("button")).find(
       (element) => element.getAttribute("aria-label") === "Copy comment as markdown",

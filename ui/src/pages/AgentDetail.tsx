@@ -3228,7 +3228,7 @@ function RunDetail({
   run: HeartbeatRun;
   agentRouteId: string;
   adapterType: string;
-  adapterConfig: Record<string, unknown>;
+  adapterConfig?: Record<string, unknown>;
   transcriptOnly?: boolean;
 }) {
   const queryClient = useQueryClient();

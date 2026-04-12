@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { sessionCodec as claudeSessionCodec } from "@paperclipai/adapter-claude-local/server";
 import { sessionCodec as codexSessionCodec, isCodexUnknownSessionError } from "@paperclipai/adapter-codex-local/server";
-import { sessionCodec as lettaSessionCodec } from "@paperclipai/adapter-letta-local/server";
 import {
   sessionCodec as cursorSessionCodec,
   isCursorUnknownSessionError,
@@ -36,29 +35,6 @@ describe("adapter session codecs", () => {
     });
     expect(claudeSessionCodec.getDisplayId?.(serialized ?? null)).toBe("claude-session-1");
   });
-
-
-  it("normalizes letta session params without using agent identity as session state", () => {
-    const parsed = lettaSessionCodec.deserialize({
-      conversationId: "conv-1",
-      sessionId: "session-1",
-      cwd: "/tmp/letta",
-    });
-    expect(parsed).toEqual({
-      conversationId: "conv-1",
-      sessionId: "session-1",
-      cwd: "/tmp/letta",
-    });
-
-    const serialized = lettaSessionCodec.serialize(parsed);
-    expect(serialized).toEqual({
-      conversationId: "conv-1",
-      sessionId: "session-1",
-      cwd: "/tmp/letta",
-    });
-    expect(lettaSessionCodec.getDisplayId?.(serialized ?? null)).toBe("conv-1");
-  });
-
   it("normalizes codex session params with cwd", () => {
     const parsed = codexSessionCodec.deserialize({
       sessionId: "codex-session-1",

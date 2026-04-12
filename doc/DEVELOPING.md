@@ -100,17 +100,17 @@ If you want Paperclip reachable on a VPS IP or public hostname, do not use
 
 Instead, run in `authenticated` mode and bind to `0.0.0.0`.
 
-Example for a server reachable at `http://72.61.251.227:3100`:
+Example for a server reachable at `http://72.61.251.227:3101`:
 
 ```sh
 cd /home/lamrin/paperclip
 
 export HOST=0.0.0.0
-export PORT=3100
+export PORT=3101
 export PAPERCLIP_DEPLOYMENT_MODE=authenticated
 export PAPERCLIP_DEPLOYMENT_EXPOSURE=public
 export PAPERCLIP_AUTH_BASE_URL_MODE=explicit
-export PAPERCLIP_AUTH_PUBLIC_BASE_URL=http://72.61.251.227:3100
+export PAPERCLIP_AUTH_PUBLIC_BASE_URL=http://72.61.251.227:3101
 export PAPERCLIP_ALLOWED_HOSTNAMES=72.61.251.227
 
 pnpm paperclipai run
@@ -136,11 +136,11 @@ Type=simple
 User=lamrin
 WorkingDirectory=/home/lamrin/paperclip
 Environment=HOST=0.0.0.0
-Environment=PORT=3100
+Environment=PORT=3101
 Environment=PAPERCLIP_DEPLOYMENT_MODE=authenticated
 Environment=PAPERCLIP_DEPLOYMENT_EXPOSURE=public
 Environment=PAPERCLIP_AUTH_BASE_URL_MODE=explicit
-Environment=PAPERCLIP_AUTH_PUBLIC_BASE_URL=http://72.61.251.227:3100
+Environment=PAPERCLIP_AUTH_PUBLIC_BASE_URL=http://72.61.251.227:3101
 Environment=PAPERCLIP_ALLOWED_HOSTNAMES=72.61.251.227
 ExecStart=/bin/bash -lc 'pnpm paperclipai run'
 Restart=always
@@ -167,14 +167,14 @@ service.
 Verify the server is listening publicly:
 
 ```sh
-ss -ltnp | grep ':3100'
-curl http://127.0.0.1:3100/api/health
-curl http://72.61.251.227:3100/api/health
+ss -ltnp | grep ':3101'
+curl http://127.0.0.1:3101/api/health
+curl http://72.61.251.227:3101/api/health
 ```
 
 Expected behavior:
 
-- listener shows `0.0.0.0:3100`
+- listener shows `0.0.0.0:3101`
 - `/api/health` reports `"deploymentMode":"authenticated"`
 
 ### First authenticated boot from a previous local_trusted instance
@@ -185,14 +185,14 @@ If the instance was previously run in `local_trusted`, Paperclip prints a
 It will show a one-time claim URL like:
 
 ```text
-http://localhost:3100/board-claim/<token>?code=<code>
+http://localhost:3101/board-claim/<token>?code=<code>
 ```
 
-If you are using a VPS IP or hostname, replace `localhost:3100` in that URL
+If you are using a VPS IP or hostname, replace `localhost:3101` in that URL
 with your real public address before opening it in the browser. Example:
 
 ```text
-http://72.61.251.227:3100/board-claim/<token>?code=<code>
+http://72.61.251.227:3101/board-claim/<token>?code=<code>
 ```
 
 After that claim flow is completed, the authenticated board user owns the

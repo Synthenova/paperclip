@@ -28,7 +28,7 @@ import {
   thematicBreakPlugin,
   type RealmPlugin,
 } from "@mdxeditor/editor";
-import { buildAgentMentionHref, buildProjectMentionHref } from "@paperclipai/shared";
+import { buildAgentMentionHref, buildProjectMentionHref, buildUserMentionHref } from "@paperclipai/shared";
 import { Boxes } from "lucide-react";
 import { AgentIcon } from "./AgentIconPicker";
 import { applyMentionChipDecoration, clearMentionChipDecoration, parseMentionChipHref } from "../lib/mention-chips";
@@ -45,11 +45,16 @@ import { useEditorAutocomplete, type SkillCommandOption } from "../context/Edito
 export interface MentionOption {
   id: string;
   name: string;
-  kind?: "agent" | "project";
+  label?: string;
+  searchText?: string;
+  group?: string;
+  kind?: "agent" | "project" | "user";
   agentId?: string;
   agentIcon?: string | null;
   projectId?: string;
   projectColor?: string | null;
+  userId?: string;
+  userEmail?: string | null;
 }
 
 /* ---- Editor props ---- */
@@ -285,6 +290,9 @@ function mentionMarkdown(option: MentionOption): string {
   if (option.kind === "project" && option.projectId) {
     return `[@${option.name}](${buildProjectMentionHref(option.projectId, option.projectColor ?? null)}) `;
   }
+  if (option.kind === "user" && option.userId) {
+    return `[@${option.name}](${buildUserMentionHref(option.userId, option.userEmail ?? null)}) `;
+  }
   const agentId = option.agentId ?? option.id.replace(/^agent:/, "");
   return `[@${option.name}](${buildAgentMentionHref(agentId, option.agentIcon ?? null)}) `;
 }
@@ -457,6 +465,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       if (mention.kind === "project" && mention.projectId) {
         map.set(`project:${mention.projectId}`, mention);
       }
+      if (mention.kind === "user" && mention.userId) {
+        map.set(`user:${mention.userId}`, mention);
+      }
     }
     return map;
   }, [mentions]);
@@ -486,7 +497,10 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         .slice(0, 8);
     }
     if (!mentions) return [];
-    return mentions.filter((m) => m.name.toLowerCase().includes(q)).slice(0, 8);
+    return mentions.filter((m) => {
+      const haystack = `${m.label ?? m.name} ${m.searchText ?? ""}`.toLowerCase();
+      return haystack.includes(q);
+    }).slice(0, 8);
   }, [mentionState, mentions, slashCommands]);
 
   useImperativeHandle(forwardedRef, () => ({
@@ -586,6 +600,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
           ...parsed,
           color: parsed.color ?? option?.projectColor ?? null,
         });
+        continue;
+      }
+
+      if (parsed.kind === "user") {
+        applyMentionChipDecoration(link, parsed);
         continue;
       }
 
@@ -710,10 +729,35 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         const editable = containerRef.current?.querySelector('[contenteditable="true"]');
         if (!(editable instanceof HTMLElement)) return;
 
-        decorateProjectMentions();
-        editable.focus();
-
-        const target = findClosestAutocompleteAnchor(editable, option, state);
+        const mentionHref = option.kind === "skill"
+          ? option.href
+          : option.kind === "project" && option.projectId
+            ? buildProjectMentionHref(option.projectId, option.projectColor ?? null)
+            : option.kind === "user" && option.userId
+              ? buildUserMentionHref(option.userId, option.userEmail ?? null)
+              : buildAgentMentionHref(
+                  option.agentId ?? option.id.replace(/^agent:/, ""),
+                  option.agentIcon ?? null,
+                );
+        const expectedLabel = option.kind === "skill" ? `/${option.slug}` : `@${option.name}`;
+        const matchingMentions = Array.from(editable.querySelectorAll("a"))
+          .filter((node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement)
+          .filter((link) => {
+            const href = link.getAttribute("href") ?? "";
+            return href === mentionHref && link.textContent === expectedLabel;
+          });
+        const containerRect = containerRef.current?.getBoundingClientRect();
+        const target = matchingMentions.sort((a, b) => {
+          const rectA = a.getBoundingClientRect();
+          const rectB = b.getBoundingClientRect();
+          const leftA = containerRect ? rectA.left - containerRect.left : rectA.left;
+          const topA = containerRect ? rectA.top - containerRect.top : rectA.top;
+          const leftB = containerRect ? rectB.left - containerRect.left : rectB.left;
+          const topB = containerRect ? rectB.top - containerRect.top : rectB.top;
+          const distA = Math.hypot(leftA - state.left, topA - state.top);
+          const distB = Math.hypot(leftB - state.left, topB - state.top);
+          return distA - distB;
+        })[0] ?? null;
         if (!target) {
           if (attemptsRemaining > 0) {
             requestAnimationFrame(() => restoreSelection(attemptsRemaining - 1));
@@ -760,6 +804,26 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         getMentionMenuSize(filteredMentions.length),
       )
     : null;
+  const mentionEntries = useMemo(() => {
+    if (!mentionState || mentionState.trigger !== "mention") return [];
+    return filteredMentions as MentionOption[];
+  }, [filteredMentions, mentionState]);
+  const groupedMentions = useMemo(() => {
+    const groups: Array<{ label: string | null; options: MentionOption[] }> = [];
+    const byGroup = new Map<string | null, MentionOption[]>();
+    for (const option of mentionEntries) {
+      const key = option.group ?? null;
+      const existing = byGroup.get(key);
+      if (existing) {
+        existing.push(option);
+      } else {
+        const bucket = [option];
+        byGroup.set(key, bucket);
+        groups.push({ label: key, options: bucket });
+      }
+    }
+    return groups;
+  }, [mentionEntries]);
 
   return (
     <div
@@ -903,60 +967,105 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       />
 
       {/* Mention dropdown — rendered via portal so it isn't clipped by overflow containers */}
-      {mentionActive && filteredMentions.length > 0 &&
-        createPortal(
-          <div
-            className="fixed z-[9999] min-w-[180px] max-w-[calc(100vw-16px)] max-h-[200px] overflow-y-auto rounded-md border border-border bg-popover shadow-md"
-            style={mentionMenuPosition ?? undefined}
-          >
-            {filteredMentions.map((option, i) => (
-              <button
-                key={option.id}
-                type="button"
-                className={cn(
-                  "flex items-center gap-2 w-full px-3 py-1.5 text-sm text-left hover:bg-accent/50 transition-colors",
-                  i === mentionIndex && "bg-accent",
-                )}
-                onPointerDown={(e) => {
-                  e.preventDefault(); // prevent blur
-                  selectMention(option);
-                }}
-                onMouseEnter={() => {
-                  if (mentionStateRef.current?.trigger === "skill") {
-                    skillEnterArmedRef.current = true;
-                  }
-                  setMentionIndex(i);
-                }}
-              >
-                {option.kind === "skill" ? (
+      {mentionActive && mentionState?.trigger === "skill" && filteredMentions.length > 0
+        ? createPortal(
+            <div
+              className="fixed z-[9999] min-w-[180px] max-w-[calc(100vw-16px)] max-h-[200px] overflow-y-auto rounded-md border border-border bg-popover shadow-md"
+              style={mentionMenuPosition ?? undefined}
+            >
+              {(filteredMentions as SkillCommandOption[]).map((option, i) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={cn(
+                    "flex items-center gap-2 w-full px-3 py-1.5 text-sm text-left hover:bg-accent/50 transition-colors",
+                    i === mentionIndex && "bg-accent",
+                  )}
+                  onPointerDown={(e) => {
+                    e.preventDefault(); // prevent blur
+                    selectMention(option);
+                  }}
+                  onMouseEnter={() => {
+                    if (mentionStateRef.current?.trigger === "skill") {
+                      skillEnterArmedRef.current = true;
+                    }
+                    setMentionIndex(i);
+                  }}
+                >
                   <Boxes className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                ) : option.kind === "project" && option.projectId ? (
-                  <span
-                    className="inline-flex h-2 w-2 rounded-full border border-border/50"
-                    style={{ backgroundColor: option.projectColor ?? "#64748b" }}
-                  />
-                ) : (
-                  <AgentIcon
-                    icon={option.agentIcon}
-                    className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                  />
-                )}
-                <span>{option.kind === "skill" ? `/${option.slug}` : option.name}</span>
-                {option.kind === "project" && option.projectId && (
-                  <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">
-                    Project
-                  </span>
-                )}
-                {option.kind === "skill" && (
+                  <span className="truncate">/{option.slug}</span>
                   <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">
                     Skill
                   </span>
-                )}
-              </button>
-            ))}
-          </div>,
-          document.body,
-        )}
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : mentionActive && mentionState?.trigger === "mention" && groupedMentions.length > 0
+          ? createPortal(
+              <div
+                className="fixed z-[9999] min-w-[180px] max-w-[calc(100vw-16px)] max-h-[200px] overflow-y-auto rounded-md border border-border bg-popover shadow-md"
+                style={mentionMenuPosition ?? undefined}
+              >
+                {groupedMentions.map((group, groupIndex) => (
+                  <div key={group.label ?? `__ungrouped_${groupIndex}`}>
+                    {group.label && (
+                      <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">
+                        {group.label}
+                      </div>
+                    )}
+                    {group.options.map((option) => {
+                      const optionIndex = mentionEntries.findIndex((candidate) => candidate.id === option.id);
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          className={cn(
+                            "flex items-center gap-2 w-full px-3 py-1.5 text-sm text-left hover:bg-accent/50 transition-colors",
+                            optionIndex === mentionIndex && "bg-accent",
+                          )}
+                          onPointerDown={(e) => {
+                            e.preventDefault(); // prevent blur
+                            selectMention(option);
+                          }}
+                          onMouseEnter={() => setMentionIndex(optionIndex)}
+                        >
+                          {option.kind === "project" && option.projectId ? (
+                            <span
+                              className="inline-flex h-2 w-2 rounded-full border border-border/50"
+                              style={{ backgroundColor: option.projectColor ?? "#64748b" }}
+                            />
+                          ) : option.kind === "user" ? (
+                            <span className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-border/70 text-[9px] font-semibold text-muted-foreground">
+                              U
+                            </span>
+                          ) : (
+                            <AgentIcon
+                              icon={option.agentIcon}
+                              className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                            />
+                          )}
+                          <span className="truncate">{option.label ?? option.name}</span>
+                          {option.kind === "project" && option.projectId && (
+                            <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">
+                              Project
+                            </span>
+                          )}
+                          {option.kind === "user" && (
+                            <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">
+                              Human
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>,
+              document.body,
+            )
+          : null}
 
       {isDragOver && canDropFile && (
         <div

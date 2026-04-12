@@ -63,7 +63,6 @@ import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
 } from "@paperclipai/adapter-codex-local";
-import { DEFAULT_LETTA_LOCAL_MODEL } from "@paperclipai/adapter-letta-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
 import { ensureOpenCodeModelConfiguredAndAvailable } from "@paperclipai/adapter-opencode-local/server";
@@ -78,7 +77,6 @@ export function agentRoutes(db: Db) {
     claude_local: "instructionsFilePath",
     codex_local: "instructionsFilePath",
     droid_local: "instructionsFilePath",
-    letta_local: "instructionsFilePath",
     gemini_local: "instructionsFilePath",
     hermes_local: "instructionsFilePath",
     opencode_local: "instructionsFilePath",
@@ -502,10 +500,6 @@ export function agentRoutes(db: Db) {
       if (!hasBypassFlag) {
         next.dangerouslyBypassApprovalsAndSandbox = DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
       }
-      return ensureGatewayDeviceKey(adapterType, next);
-    }
-    if (adapterType === "letta_local" && !asNonEmptyString(next.model)) {
-      next.model = DEFAULT_LETTA_LOCAL_MODEL;
       return ensureGatewayDeviceKey(adapterType, next);
     }
     if (adapterType === "gemini_local" && !asNonEmptyString(next.model)) {
@@ -1443,7 +1437,6 @@ export function agentRoutes(db: Db) {
       lastHeartbeatAt: null,
     });
     const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent);
-
     let approval: Awaited<ReturnType<typeof approvalsSvc.getById>> | null = null;
     const actor = getActorInfo(req);
 
@@ -1594,7 +1587,6 @@ export function agentRoutes(db: Db) {
       lastHeartbeatAt: null,
     });
     const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent);
-
     const actor = getActorInfo(req);
     await logActivity(db, {
       companyId,

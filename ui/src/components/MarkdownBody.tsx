@@ -167,7 +167,9 @@ export function MarkdownBody({
           ? `/projects/${parsed.projectId}`
           : parsed.kind === "skill"
             ? `/skills/${parsed.skillId}`
-            : `/agents/${parsed.agentId}`;
+            : parsed.kind === "user"
+              ? (parsed.email ? `mailto:${parsed.email}` : "#")
+              : `/agents/${parsed.agentId}`;
         return (
           <a
             href={targetHref}

@@ -39,7 +39,6 @@ import {
   DEFAULT_CODEX_LOCAL_MODEL
 } from "@paperclipai/adapter-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
-import { DEFAULT_LETTA_LOCAL_MODEL } from "@paperclipai/adapter-letta-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
 import { resolveRouteOnboardingOptions } from "../lib/onboarding-route";
 import { AsciiArtAnimation } from "./AsciiArtAnimation";
@@ -220,7 +219,6 @@ export function OnboardingWizard() {
   const COMMAND_PLACEHOLDERS: Record<string, string> = {
     claude_local: "claude",
     codex_local: "codex",
-    letta_local: "letta",
     gemini_local: "gemini",
     hermes_local: "hermes",
     pi_local: "pi",
@@ -325,8 +323,6 @@ export function OnboardingWizard() {
       model:
         adapterType === "codex_local"
           ? model || DEFAULT_CODEX_LOCAL_MODEL
-          : adapterType === "letta_local"
-            ? model || DEFAULT_LETTA_LOCAL_MODEL
           : adapterType === "gemini_local"
             ? model || DEFAULT_GEMINI_LOCAL_MODEL
           : adapterType === "cursor"
@@ -772,11 +768,7 @@ export function OnboardingWizard() {
                               setModel(DEFAULT_CODEX_LOCAL_MODEL);
                               return;
                             }
-                            if (nextType === "letta_local" && !model) {
-                              setModel(DEFAULT_LETTA_LOCAL_MODEL);
-                              return;
-                            }
-                            if (nextType !== "codex_local" && nextType !== "letta_local") {
+                            if (nextType !== "codex_local") {
                               setModel("");
                             }
                           }}
@@ -957,33 +949,6 @@ export function OnboardingWizard() {
                         </Popover>
                       </div>
 
-                      {adapterType === "letta_local" && (
-                        <div className="space-y-3 rounded-md border border-border p-3">
-                          <div>
-                            <p className="text-xs font-medium">Letta settings</p>
-                            <p className="text-[11px] text-muted-foreground">
-                              Paperclip reuses one Letta agent per Paperclip agent and starts a fresh conversation on each run.
-                            </p>
-                          </div>
-                          <div>
-                            <label className="text-xs text-muted-foreground mb-1 block">
-                              Agent instructions file
-                            </label>
-                            <div className="flex items-center gap-2">
-                              <input
-                                className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm font-mono outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
-                                placeholder="/absolute/path/to/AGENTS.md"
-                                value={instructionsFilePath}
-                                onChange={(e) => setInstructionsFilePath(e.target.value)}
-                              />
-                              <ChoosePathButton />
-                            </div>
-                            <p className="mt-1 text-[11px] text-muted-foreground">
-                              Optional. Appended to Letta's default system prompt when Paperclip creates or rotates the underlying Letta agent, and also prepended to each Paperclip run prompt.
-                            </p>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   )}
 
@@ -1058,8 +1023,6 @@ export function OnboardingWizard() {
                               ? `${effectiveAdapterCommand} -p --mode ask --output-format json \"Respond with hello.\"`
                               : adapterType === "codex_local"
                               ? `${effectiveAdapterCommand} exec --json -`
-                              : adapterType === "letta_local"
-                                ? `${effectiveAdapterCommand}`
                               : adapterType === "gemini_local"
                                 ? `${effectiveAdapterCommand} --output-format json "Respond with hello."`
                               : adapterType === "opencode_local"
@@ -1072,7 +1035,6 @@ export function OnboardingWizard() {
                           </p>
                           {adapterType === "cursor" ||
                           adapterType === "codex_local" ||
-                          adapterType === "letta_local" ||
                           adapterType === "gemini_local" ||
                           adapterType === "opencode_local" ? (
                             <p className="text-muted-foreground">
@@ -1080,9 +1042,7 @@ export function OnboardingWizard() {
                               <span className="font-mono">
                                 {adapterType === "cursor"
                                   ? "CURSOR_API_KEY"
-                                  : adapterType === "letta_local"
-                                    ? "LETTA_API_KEY"
-                                    : adapterType === "gemini_local"
+                                  : adapterType === "gemini_local"
                                       ? "GEMINI_API_KEY"
                                       : "OPENAI_API_KEY"}
                               </span>{" "}
@@ -1092,9 +1052,7 @@ export function OnboardingWizard() {
                                   ? "agent login"
                                   : adapterType === "codex_local"
                                     ? "codex login"
-                                    : adapterType === "letta_local"
-                                      ? "letta"
-                                      : adapterType === "gemini_local"
+                                    : adapterType === "gemini_local"
                                         ? "gemini auth"
                                         : "opencode auth login"}
                               </span>

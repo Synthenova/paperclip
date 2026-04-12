@@ -20,15 +20,6 @@ import {
 } from "@paperclipai/adapter-codex-local/server";
 import { agentConfigurationDoc as codexAgentConfigurationDoc, models as codexModels } from "@paperclipai/adapter-codex-local";
 import {
-  execute as lettaExecute,
-  listLettaModels,
-  listLettaSkills,
-  syncLettaSkills,
-  testEnvironment as lettaTestEnvironment,
-  sessionCodec as lettaSessionCodec,
-} from "@paperclipai/adapter-letta-local/server";
-import { agentConfigurationDoc as lettaAgentConfigurationDoc, models as lettaModels } from "@paperclipai/adapter-letta-local";
-import {
   execute as cursorExecute,
   listCursorSkills,
   syncCursorSkills,
@@ -92,6 +83,15 @@ import {
 import { BUILTIN_ADAPTER_TYPES } from "./builtin-adapter-types.js";
 import { buildExternalAdapters } from "./plugin-loader.js";
 import { getDisabledAdapterTypes } from "../services/adapter-plugin-store.js";
+import {
+  execute as clawExecute,
+  testEnvironment as clawTestEnvironment,
+  sessionCodec as clawSessionCodec,
+} from "@paperclipai/adapter-claw-local/server";
+import {
+  agentConfigurationDoc as clawAgentConfigurationDoc,
+  models as clawModels,
+} from "@paperclipai/adapter-claw-local";
 import { processAdapter } from "./process/index.js";
 import { httpAdapter } from "./http/index.js";
 
@@ -108,20 +108,6 @@ const claudeLocalAdapter: ServerAdapterModule = {
   supportsLocalAgentJwt: true,
   agentConfigurationDoc: claudeAgentConfigurationDoc,
   getQuotaWindows: claudeGetQuotaWindows,
-};
-
-const lettaLocalAdapter: ServerAdapterModule = {
-  type: "letta_local",
-  execute: lettaExecute,
-  testEnvironment: lettaTestEnvironment,
-  listSkills: listLettaSkills,
-  syncSkills: syncLettaSkills,
-  sessionCodec: lettaSessionCodec,
-  sessionManagement: getAdapterSessionManagement("letta_local") ?? undefined,
-  models: lettaModels,
-  listModels: listLettaModels,
-  supportsLocalAgentJwt: true,
-  agentConfigurationDoc: lettaAgentConfigurationDoc,
 };
 
 const codexLocalAdapter: ServerAdapterModule = {
@@ -216,6 +202,17 @@ const hermesLocalAdapter: ServerAdapterModule = {
   detectModel: () => detectModelFromHermes(),
 };
 
+const clawLocalAdapter: ServerAdapterModule = {
+  type: "claw_local",
+  execute: clawExecute,
+  testEnvironment: clawTestEnvironment,
+  sessionCodec: clawSessionCodec,
+  sessionManagement: getAdapterSessionManagement("claw_local") ?? undefined,
+  models: clawModels,
+  supportsLocalAgentJwt: true,
+  agentConfigurationDoc: clawAgentConfigurationDoc,
+};
+
 const adaptersByType = new Map<string, ServerAdapterModule>();
 
 // For builtin types that are overridden by an external adapter, we keep the
@@ -231,13 +228,13 @@ function registerBuiltInAdapters() {
   for (const adapter of [
     claudeLocalAdapter,
     codexLocalAdapter,
-    lettaLocalAdapter,
     openCodeLocalAdapter,
     piLocalAdapter,
     cursorLocalAdapter,
     geminiLocalAdapter,
     openclawGatewayAdapter,
     hermesLocalAdapter,
+    clawLocalAdapter,
     processAdapter,
     httpAdapter,
   ]) {

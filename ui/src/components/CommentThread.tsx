@@ -1,4 +1,5 @@
-import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "react-router-dom";
 import type {
   Agent,
@@ -18,7 +19,11 @@ import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./Ma
 import { OutputFeedbackButtons } from "./OutputFeedbackButtons";
 import { ApprovalCard } from "./ApprovalCard";
 import { AgentIcon } from "./AgentIconPicker";
+import { accessApi } from "../api/access";
+import { authApi } from "../api/auth";
 import { formatAssigneeUserLabel } from "../lib/assignees";
+import { buildMentionOptions } from "../lib/people-directory";
+import { queryKeys } from "../lib/queryKeys";
 import type { IssueTimelineAssignee, IssueTimelineEvent } from "../lib/issue-timeline-events";
 import { timeAgo } from "../lib/timeAgo";
 import { cn, formatDateTime } from "../lib/utils";
@@ -675,6 +680,15 @@ export function CommentThread({
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const location = useLocation();
   const hasScrolledRef = useRef(false);
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+  });
+  const { data: members } = useQuery({
+    queryKey: companyId ? queryKeys.access.users(companyId) : ["access", "users", "__idle__"],
+    queryFn: () => accessApi.listUsers(companyId!),
+    enabled: Boolean(companyId) && !(providedMentions?.length) && session !== null && session !== undefined,
+  });
 
   const timeline = useMemo<TimelineItem[]>(() => {
     const commentItems: TimelineItem[] = comments.map((comment) => ({
@@ -723,20 +737,15 @@ export function CommentThread({
     return map;
   }, [feedbackVotes]);
 
-  // Build mention options from agent map (exclude terminated agents)
   const mentions = useMemo<MentionOption[]>(() => {
     if (providedMentions) return providedMentions;
-    if (!agentMap) return [];
-    return Array.from(agentMap.values())
-      .filter((a) => a.status !== "terminated")
-      .map((a) => ({
-        id: `agent:${a.id}`,
-        name: a.name,
-        kind: "agent",
-        agentId: a.id,
-        agentIcon: a.icon,
-      }));
-  }, [agentMap, providedMentions]);
+    if (!agentMap && !members) return [];
+    return buildMentionOptions({
+      members,
+      agents: Array.from(agentMap?.values() ?? []),
+      includeProjects: false,
+    });
+  }, [agentMap, members, providedMentions]);
 
   useEffect(() => {
     if (!draftKey) return;

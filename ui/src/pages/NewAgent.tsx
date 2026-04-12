@@ -30,18 +30,17 @@ import {
 } from "@paperclipai/adapter-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
-import { DEFAULT_LETTA_LOCAL_MODEL } from "@paperclipai/adapter-letta-local";
 
 const SUPPORTED_ADVANCED_ADAPTER_TYPES = new Set<CreateConfigValues["adapterType"]>([
   "claude_local",
   "codex_local",
-  "letta_local",
   "gemini_local",
   "opencode_local",
   "pi_local",
   "cursor",
   "hermes_local",
   "openclaw_gateway",
+  "claw_local",
 ]);
 
 function createValuesForAdapterType(
@@ -53,8 +52,6 @@ function createValuesForAdapterType(
     nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
     nextValues.dangerouslyBypassSandbox =
       DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
-  } else if (adapterType === "letta_local") {
-    nextValues.model = DEFAULT_LETTA_LOCAL_MODEL;
   } else if (adapterType === "gemini_local") {
     nextValues.model = DEFAULT_GEMINI_LOCAL_MODEL;
   } else if (adapterType === "cursor") {
