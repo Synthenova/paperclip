@@ -30,7 +30,7 @@ function formatFastModeSupportedModels(): string {
 
 export function buildCodexExecArgs(
   config: unknown,
-  options: { resumeSessionId?: string | null } = {},
+  options: { resumeSessionId?: string | null; addDirs?: string[] } = {},
 ): BuildCodexExecArgsResult {
   const record = asRecord(config);
   const model = asString(record.model, "").trim();
@@ -56,6 +56,13 @@ export function buildCodexExecArgs(
   }
   if (fastModeApplied) {
     args.push("-c", 'service_tier="fast"', "-c", "features.fast_mode=true");
+  }
+  if (Array.isArray(options.addDirs)) {
+    for (const dir of options.addDirs) {
+      if (typeof dir === "string" && dir.trim().length > 0) {
+        args.push("--add-dir", dir);
+      }
+    }
   }
   if (extraArgs.length > 0) args.push(...extraArgs);
   if (options.resumeSessionId) args.push("resume", options.resumeSessionId, "-");

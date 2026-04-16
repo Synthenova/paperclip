@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
-import { runChildProcess } from "./server-utils.js";
+import { describe, expect, it, vi } from "vitest";
+import { buildInvocationEnvForLogs, runChildProcess } from "./server-utils.js";
 
 function isPidAlive(pid: number) {
   try {
@@ -84,5 +84,21 @@ describe("runChildProcess", () => {
     expect(Number.isInteger(descendantPid) && descendantPid > 0).toBe(true);
 
     expect(await waitForPidExit(descendantPid!, 2_000)).toBe(true);
+  });
+});
+
+describe("buildInvocationEnvForLogs", () => {
+  it("redacts sensitive keys by default", () => {
+    vi.stubEnv("PAPERCLIP_DEPLOYMENT_MODE", "authenticated");
+    const env = buildInvocationEnvForLogs({ PAPERCLIP_API_KEY: "secret-token", NORMAL_KEY: "visible" });
+    expect(env.PAPERCLIP_API_KEY).toBe("***REDACTED***");
+    expect(env.NORMAL_KEY).toBe("visible");
+  });
+
+  it("emits the raw env in local_trusted mode", () => {
+    vi.stubEnv("PAPERCLIP_DEPLOYMENT_MODE", "local_trusted");
+    const env = buildInvocationEnvForLogs({ PAPERCLIP_API_KEY: "secret-token", NORMAL_KEY: "visible" });
+    expect(env.PAPERCLIP_API_KEY).toBe("secret-token");
+    expect(env.NORMAL_KEY).toBe("visible");
   });
 });

@@ -48,6 +48,7 @@ interface ClaudeRuntimeConfig {
   command: string;
   resolvedCommand: string;
   cwd: string;
+  agentHome: string | null;
   workspaceId: string | null;
   workspaceRepoUrl: string | null;
   workspaceRepoRef: string | null;
@@ -247,6 +248,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     command,
     resolvedCommand,
     cwd,
+    agentHome,
     workspaceId,
     workspaceRepoUrl,
     workspaceRepoRef,
@@ -320,6 +322,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     command,
     resolvedCommand,
     cwd,
+    agentHome,
     workspaceId,
     workspaceRepoUrl,
     workspaceRepoRef,
@@ -448,6 +451,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       args.push("--append-system-prompt-file", attemptInstructionsFilePath);
     }
     args.push("--add-dir", promptBundle.addDir);
+    if (agentHome && path.resolve(agentHome) !== path.resolve(cwd)) {
+      args.push("--add-dir", agentHome);
+    }
     if (extraArgs.length > 0) args.push(...extraArgs);
     return args;
   };
@@ -479,6 +485,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       commandNotes.push(
         `Injected agent instructions via --append-system-prompt-file ${instructionsFilePath} (with path directive appended)`,
       );
+    }
+    if (agentHome && path.resolve(agentHome) !== path.resolve(cwd)) {
+      commandNotes.push(`Added agent-private directory alongside the active workspace via --add-dir ${agentHome}`);
     }
     if (onMeta) {
       await onMeta({

@@ -12,6 +12,7 @@ import { accessService, agentService, companySkillService, logActivity } from ".
 import { forbidden } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { getTelemetryClient } from "../telemetry.js";
+import { agentsHaveFullManagementPermissions } from "../services/full-agent-access.js";
 
 type SkillTelemetryInput = {
   key: string;
@@ -28,6 +29,7 @@ export function companySkillRoutes(db: Db) {
   const svc = companySkillService(db);
 
   function canCreateAgents(agent: { permissions: Record<string, unknown> | null | undefined }) {
+    if (agentsHaveFullManagementPermissions()) return true;
     if (!agent.permissions || typeof agent.permissions !== "object") return false;
     return Boolean((agent.permissions as Record<string, unknown>).canCreateAgents);
   }

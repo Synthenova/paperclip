@@ -9,6 +9,8 @@ For mode definitions and intended CLI behavior, see `doc/DEPLOYMENT-MODES.md`.
 Current implementation status:
 
 - canonical model: `local_trusted` and `authenticated` (with `private/public` exposure)
+- fork default: `authenticated` mode treats every signed-in human user as a full board admin across all companies. Set `PAPERCLIP_AUTHENTICATED_USERS_ARE_INSTANCE_ADMINS=false` to re-enable scoped company access and explicit grants.
+- fork default: agent actors in a company are also treated as having broad management permissions. Set `PAPERCLIP_ALL_AGENTS_HAVE_FULL_PERMISSIONS=false` to re-enable explicit agent grants such as `agents:create` and `tasks:assign`.
 
 ## Prerequisites
 

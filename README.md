@@ -199,6 +199,9 @@ pnpm dev
 This starts the API server at `http://localhost:3100`. An embedded PostgreSQL database is created automatically — no setup required.
 
 > **Requirements:** Node.js 20+, pnpm 9.15+
+>
+> Fork default: in `authenticated` mode, every signed-in human user is treated as a full board admin across all companies so small shared installs do not need a separate permissions UI. Set `PAPERCLIP_AUTHENTICATED_USERS_ARE_INSTANCE_ADMINS=false` to restore the stricter scoped model.
+> Fork default: agents are also treated as having broad management permissions across their own company. Set `PAPERCLIP_ALL_AGENTS_HAVE_FULL_PERMISSIONS=false` to restore explicit agent grants such as `agents:create` and `tasks:assign`.
 
 <br/>
 

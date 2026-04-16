@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { agentRoutes } from "../routes/agents.js";
 
@@ -144,6 +144,10 @@ function createApp(actor: Record<string, unknown>) {
 }
 
 describe("agent permission routes", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   beforeEach(() => {
     vi.resetAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
@@ -226,6 +230,34 @@ describe("agent permission routes", () => {
     );
   });
 
+  it("allows same-company agents to create agents by default in this fork", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      permissions: {},
+    });
+    mockAccessService.hasPermission.mockResolvedValue(true);
+
+    const app = createApp({
+      type: "agent",
+      agentId,
+      companyId,
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await request(app)
+      .post(`/api/companies/${companyId}/agents`)
+      .send({
+        name: "Builder 2",
+        role: "engineer",
+        adapterType: "process",
+        adapterConfig: {},
+      });
+
+    expect([200, 201]).toContain(res.status);
+    expect(mockAgentService.create).toHaveBeenCalled();
+  });
+
   it("normalizes direct agent creation to disable timer heartbeats by default", async () => {
     const app = createApp({
       type: "board",
@@ -301,6 +333,7 @@ describe("agent permission routes", () => {
   });
 
   it("exposes explicit task assignment access on agent detail", async () => {
+    vi.stubEnv("PAPERCLIP_ALL_AGENTS_HAVE_FULL_PERMISSIONS", "false");
     mockAccessService.listPrincipalGrants.mockResolvedValue([
       {
         id: "grant-1",

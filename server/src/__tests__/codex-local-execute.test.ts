@@ -5,12 +5,18 @@ import path from "node:path";
 import { execute } from "@paperclipai/adapter-codex-local/server";
 
 async function writeFakeCodexCommand(commandPath: string): Promise<void> {
-  const script = `#!/usr/bin/env node
+const script = `#!/usr/bin/env node
 const fs = require("node:fs");
 
 const capturePath = process.env.PAPERCLIP_TEST_CAPTURE_PATH;
+const argv = process.argv.slice(2);
+const addDirs = [];
+for (let i = 0; i < argv.length; i += 1) {
+  if (argv[i] === "--add-dir" && typeof argv[i + 1] === "string") addDirs.push(argv[i + 1]);
+}
 const payload = {
-  argv: process.argv.slice(2),
+  argv,
+  addDirs,
   prompt: fs.readFileSync(0, "utf8"),
   codexHome: process.env.CODEX_HOME || null,
   paperclipWakePayloadJson: process.env.PAPERCLIP_WAKE_PAYLOAD_JSON || null,
@@ -33,6 +39,7 @@ console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, c
 
 type CapturePayload = {
   argv: string[];
+  addDirs: string[];
   prompt: string;
   codexHome: string | null;
   paperclipWakePayloadJson: string | null;
@@ -905,6 +912,7 @@ describe("codex execute", () => {
 
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expect(capture.runtimeEnvFile).toBe(path.join(agentHome, "paperclip-runtime.env"));
+      expect(capture.addDirs).toEqual([agentHome]);
       const envFile = capture.runtimeEnvFile as string;
       const envFileBody = await fs.readFile(envFile, "utf8");
       expect(envFileBody).toContain("export PAPERCLIP_API_KEY='run-jwt-token'");
@@ -921,6 +929,60 @@ describe("codex execute", () => {
           chunk: expect.stringContaining("Codex runtime auth bridge: PAPERCLIP_API_KEY prepared"),
         }),
       );
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not add agentHome as an extra dir when it is already the cwd", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-add-dir-dedupe-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-agent-home-cwd",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Codex Coder",
+          adapterType: "codex_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {
+          paperclipWorkspace: {
+            agentHome: workspace,
+          },
+        },
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.addDirs).toEqual([]);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;

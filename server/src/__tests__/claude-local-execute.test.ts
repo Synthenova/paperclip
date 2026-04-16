@@ -5,13 +5,16 @@ import path from "node:path";
 import { execute } from "@paperclipai/adapter-claude-local/server";
 
 async function writeFakeClaudeCommand(commandPath: string): Promise<void> {
-  const script = `#!/usr/bin/env node
+const script = `#!/usr/bin/env node
 const fs = require("node:fs");
 const path = require("node:path");
 
 const argv = process.argv.slice(2);
-const addDirIndex = argv.indexOf("--add-dir");
-const addDir = addDirIndex >= 0 ? argv[addDirIndex + 1] : null;
+const addDirs = [];
+for (let i = 0; i < argv.length; i += 1) {
+  if (argv[i] === "--add-dir" && typeof argv[i + 1] === "string") addDirs.push(argv[i + 1]);
+}
+const addDir = addDirs[0] ?? null;
 const instructionsIndex = argv.indexOf("--append-system-prompt-file");
 const instructionsFilePath = instructionsIndex >= 0 ? argv[instructionsIndex + 1] : null;
 const capturePath = process.env.PAPERCLIP_TEST_CAPTURE_PATH;
@@ -19,6 +22,7 @@ const promptFileFlagIndex = process.argv.indexOf("--append-system-prompt-file");
 const appendedSystemPromptFilePath = promptFileFlagIndex >= 0 ? process.argv[promptFileFlagIndex + 1] : null;
 const payload = {
   argv,
+  addDirs,
   prompt: fs.readFileSync(0, "utf8"),
   addDir,
   instructionsFilePath,
@@ -41,6 +45,7 @@ console.log(JSON.stringify({ type: "result", session_id: "claude-session-1", res
 
 type CapturePayload = {
   argv: string[];
+  addDirs: string[];
   prompt: string;
   addDir: string | null;
   instructionsFilePath: string | null;
@@ -522,6 +527,7 @@ describe("claude execute", () => {
 
       expect(capture1.addDir).toBeTruthy();
       expect(capture1.addDir).toBe(capture2.addDir);
+      expect(capture1.addDirs).toHaveLength(1);
       expect(capture1.instructionsFilePath).toBeTruthy();
       expect(capture2.instructionsFilePath ?? null).toBeNull();
       expect(capture1.addDir?.startsWith(expectedRoot)).toBe(true);
@@ -538,6 +544,62 @@ describe("claude execute", () => {
       else process.env.HOME = previousHome;
       if (previousPaperclipHome === undefined) delete process.env.PAPERCLIP_HOME;
       else process.env.PAPERCLIP_HOME = previousPaperclipHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("adds agentHome as a second visible directory when it differs from the active workspace", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-extra-agent-home-"));
+    const workspace = path.join(root, "workspace");
+    const agentHome = path.join(root, "agent-home");
+    const commandPath = path.join(root, "claude");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(agentHome, { recursive: true });
+    await writeFakeClaudeCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-agent-home-extra",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Claude Coder",
+          adapterType: "claude_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {
+          paperclipWorkspace: {
+            agentHome,
+          },
+        },
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.addDirs).toEqual([expect.any(String), agentHome]);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
       await fs.rm(root, { recursive: true, force: true });
     }
   });

@@ -508,6 +508,14 @@ export function redactEnvForLogs(env: Record<string, string>): Record<string, st
   return redacted;
 }
 
+function shouldLogRuntimeEnvUnredacted() {
+  const deploymentMode = process.env.PAPERCLIP_DEPLOYMENT_MODE?.trim().toLowerCase();
+  if (deploymentMode === "local_trusted") return true;
+
+  const explicitMode = process.env.PAPERCLIP_LOG_RUNTIME_ENV?.trim().toLowerCase();
+  return explicitMode === "full" || explicitMode === "true" || explicitMode === "1";
+}
+
 export function buildInvocationEnvForLogs(
   env: Record<string, string>,
   options: {
@@ -530,6 +538,10 @@ export function buildInvocationEnvForLogs(
   const resolvedCommand = options.resolvedCommand?.trim();
   if (resolvedCommand) {
     merged[options.resolvedCommandEnvKey ?? "PAPERCLIP_RESOLVED_COMMAND"] = resolvedCommand;
+  }
+
+  if (shouldLogRuntimeEnvUnredacted()) {
+    return merged;
   }
 
   return redactEnvForLogs(merged);

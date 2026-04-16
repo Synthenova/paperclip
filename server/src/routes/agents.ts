@@ -71,6 +71,7 @@ import {
   resolveDefaultAgentInstructionsBundleRole,
 } from "../services/default-agent-instructions.js";
 import { getTelemetryClient } from "../telemetry.js";
+import { agentsHaveFullManagementPermissions } from "../services/full-agent-access.js";
 
 export function agentRoutes(db: Db) {
   const DEFAULT_INSTRUCTIONS_PATH_KEYS: Record<string, string> = {
@@ -114,6 +115,7 @@ export function agentRoutes(db: Db) {
   }
 
   function canCreateAgents(agent: { role: string; permissions: Record<string, unknown> | null | undefined }) {
+    if (agentsHaveFullManagementPermissions()) return true;
     if (!agent.permissions || typeof agent.permissions !== "object") return false;
     return Boolean((agent.permissions as Record<string, unknown>).canCreateAgents);
   }
@@ -1546,11 +1548,7 @@ export function agentRoutes(db: Db) {
 
   router.post("/companies/:companyId/agents", validate(createAgentSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
-    assertCompanyAccess(req, companyId);
-
-    if (req.actor.type === "agent") {
-      assertBoard(req);
-    }
+    await assertCanCreateAgentsForCompany(req, companyId);
 
     const {
       desiredSkills: requestedDesiredSkills,

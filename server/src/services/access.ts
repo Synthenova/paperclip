@@ -7,6 +7,8 @@ import {
   principalPermissionGrants,
 } from "@paperclipai/db";
 import type { PermissionKey, PrincipalType } from "@paperclipai/shared";
+import { agentsHaveFullManagementPermissions } from "./full-agent-access.js";
+import { authenticatedUsersAreInstanceAdmins } from "./full-human-access.js";
 
 type MembershipRow = typeof companyMemberships.$inferSelect;
 type GrantInput = {
@@ -17,6 +19,14 @@ type GrantInput = {
 export function accessService(db: Db) {
   async function isInstanceAdmin(userId: string | null | undefined): Promise<boolean> {
     if (!userId) return false;
+    if (authenticatedUsersAreInstanceAdmins()) {
+      const user = await db
+        .select({ id: authUsers.id })
+        .from(authUsers)
+        .where(eq(authUsers.id, userId))
+        .then((rows) => rows[0] ?? null);
+      if (user) return true;
+    }
     const row = await db
       .select({ id: instanceUserRoles.id })
       .from(instanceUserRoles)
@@ -51,6 +61,9 @@ export function accessService(db: Db) {
   ): Promise<boolean> {
     const membership = await getMembership(companyId, principalType, principalId);
     if (!membership || membership.status !== "active") return false;
+    if (principalType === "agent" && agentsHaveFullManagementPermissions()) {
+      return true;
+    }
     const grant = await db
       .select({ id: principalPermissionGrants.id })
       .from(principalPermissionGrants)

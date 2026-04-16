@@ -10,6 +10,7 @@ import {
   instanceUserRoles,
 } from "@paperclipai/db";
 import { conflict, forbidden, notFound } from "../errors.js";
+import { authenticatedUsersAreInstanceAdmins } from "./full-human-access.js";
 
 export const BOARD_API_KEY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const CLI_AUTH_CHALLENGE_TTL_MS = 10 * 60 * 1000;
@@ -78,6 +79,18 @@ export function boardAuthService(db: Db) {
         .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, "instance_admin")))
         .then((rows) => rows[0] ?? null),
     ]);
+
+    if (user && authenticatedUsersAreInstanceAdmins()) {
+      const companyIds = await db
+        .select({ id: companies.id })
+        .from(companies)
+        .then((rows) => rows.map((row) => row.id));
+      return {
+        user,
+        companyIds,
+        isInstanceAdmin: true,
+      };
+    }
 
     return {
       user,

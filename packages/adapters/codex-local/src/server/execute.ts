@@ -559,6 +559,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     runtimeEnvFilePath
       ? `Paperclip runtime env bridge: if \`PAPERCLIP_API_KEY\` is missing inside the Codex shell, source \`${runtimeEnvFilePath}\` before calling the Paperclip API.`
       : "";
+  const additionalWritableDirs = (() => {
+    if (!agentHome) return [];
+    if (path.resolve(agentHome) === path.resolve(cwd)) return [];
+    return [agentHome];
+  })();
   const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
   const prompt = joinPromptSections([
@@ -579,18 +584,28 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   };
 
   const runAttempt = async (resumeSessionId: string | null) => {
-    const execArgs = buildCodexExecArgs(config, { resumeSessionId });
+    const execArgs = buildCodexExecArgs(config, {
+      resumeSessionId,
+      addDirs: additionalWritableDirs,
+    });
     const args = execArgs.args;
     const commandNotesWithFastMode =
       execArgs.fastModeIgnoredReason == null
         ? commandNotes
         : [...commandNotes, execArgs.fastModeIgnoredReason];
+    const commandNotesWithDirectories =
+      additionalWritableDirs.length === 0
+        ? commandNotesWithFastMode
+        : [
+            ...commandNotesWithFastMode,
+            `Added agent-private writable directory alongside the issue workspace: ${additionalWritableDirs.join(", ")}`,
+          ];
     if (onMeta) {
       await onMeta({
         adapterType: "codex_local",
         command: resolvedCommand,
         cwd,
-        commandNotes: commandNotesWithFastMode,
+        commandNotes: commandNotesWithDirectories,
         commandArgs: args.map((value, idx) => {
           if (idx === args.length - 1 && value !== "-") return `<prompt ${prompt.length} chars>`;
           return value;
