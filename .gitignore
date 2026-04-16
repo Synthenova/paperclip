@@ -37,9 +37,15 @@ feedback-export-*
 *.tmp
 .vscode/
 .claude/settings.local.json
+.claude/skills/
 .paperclip-local/
 /.idea/
 /.agents/
+.tmp-runturn-test/
+*.mp4
+Screenshot *.png
+get-api-key.mjs
+get-api-key.py
 
 # Doc maintenance cursor
 .doc-review-cursor
