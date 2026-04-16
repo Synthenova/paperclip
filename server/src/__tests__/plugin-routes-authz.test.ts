@@ -54,6 +54,7 @@ async function createApp(actor: Record<string, unknown>, loaderOverrides: Record
 describe("plugin install and upgrade authz", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("rejects plugin installation for non-admin board users", async () => {
@@ -119,6 +120,69 @@ describe("plugin install and upgrade authz", () => {
     expect(mockLifecycle.load).toHaveBeenCalledWith(pluginId);
   }, 20_000);
 
+  it("rejects plugin installation for agents when full agent permissions are disabled", async () => {
+    vi.stubEnv("PAPERCLIP_ALL_AGENTS_HAVE_FULL_PERMISSIONS", "false");
+    const { app, loader } = await createApp({
+      type: "agent",
+      agentId: "agent-1",
+      companyId: "company-1",
+      runId: "run-1",
+    });
+
+    const res = await request(app)
+      .post("/api/plugins/install")
+      .send({ packageName: "paperclip-plugin-example" });
+
+    expect(res.status).toBe(403);
+    expect(loader.installPlugin).not.toHaveBeenCalled();
+  }, 20_000);
+
+  it("allows plugin installation for agents when full agent permissions are enabled", async () => {
+    vi.stubEnv("PAPERCLIP_ALL_AGENTS_HAVE_FULL_PERMISSIONS", "true");
+    const pluginId = "11111111-1111-4111-8111-111111111111";
+    const pluginKey = "paperclip.example";
+    const discovered = {
+      manifest: {
+        id: pluginKey,
+      },
+    };
+
+    mockRegistry.getByKey.mockResolvedValue({
+      id: pluginId,
+      pluginKey,
+      packageName: "paperclip-plugin-example",
+      version: "1.0.0",
+    });
+    mockRegistry.getById.mockResolvedValue({
+      id: pluginId,
+      pluginKey,
+      packageName: "paperclip-plugin-example",
+      version: "1.0.0",
+    });
+    mockLifecycle.load.mockResolvedValue(undefined);
+
+    const { app, loader } = await createApp(
+      {
+        type: "agent",
+        agentId: "agent-1",
+        companyId: "company-1",
+        runId: "run-1",
+      },
+      { installPlugin: vi.fn().mockResolvedValue(discovered) },
+    );
+
+    const res = await request(app)
+      .post("/api/plugins/install")
+      .send({ packageName: "paperclip-plugin-example" });
+
+    expect(res.status).toBe(200);
+    expect(loader.installPlugin).toHaveBeenCalledWith({
+      packageName: "paperclip-plugin-example",
+      version: undefined,
+    });
+    expect(mockLifecycle.load).toHaveBeenCalledWith(pluginId);
+  }, 20_000);
+
   it("rejects plugin upgrades for non-admin board users", async () => {
     const pluginId = "11111111-1111-4111-8111-111111111111";
     const { app } = await createApp({
@@ -156,6 +220,34 @@ describe("plugin install and upgrade authz", () => {
       source: "session",
       isInstanceAdmin: true,
       companyIds: [],
+    });
+
+    const res = await request(app)
+      .post(`/api/plugins/${pluginId}/upgrade`)
+      .send({ version: "1.1.0" });
+
+    expect(res.status).toBe(200);
+    expect(mockLifecycle.upgrade).toHaveBeenCalledWith(pluginId, "1.1.0");
+  }, 20_000);
+
+  it("allows plugin upgrades for agents when full agent permissions are enabled", async () => {
+    vi.stubEnv("PAPERCLIP_ALL_AGENTS_HAVE_FULL_PERMISSIONS", "true");
+    const pluginId = "11111111-1111-4111-8111-111111111111";
+    mockRegistry.getById.mockResolvedValue({
+      id: pluginId,
+      pluginKey: "paperclip.example",
+      version: "1.0.0",
+    });
+    mockLifecycle.upgrade.mockResolvedValue({
+      id: pluginId,
+      version: "1.1.0",
+    });
+
+    const { app } = await createApp({
+      type: "agent",
+      agentId: "agent-1",
+      companyId: "company-1",
+      runId: "run-1",
     });
 
     const res = await request(app)

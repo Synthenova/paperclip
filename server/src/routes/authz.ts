@@ -1,5 +1,6 @@
 import type { Request } from "express";
 import { forbidden, unauthorized } from "../errors.js";
+import { agentsHaveFullManagementPermissions } from "../services/full-agent-access.js";
 
 export function assertAuthenticated(req: Request) {
   if (req.actor.type === "none") {
@@ -8,16 +9,16 @@ export function assertAuthenticated(req: Request) {
 }
 
 export function assertBoard(req: Request) {
-  if (req.actor.type !== "board") {
-    throw forbidden("Board access required");
-  }
+  assertAuthenticated(req);
+  if (req.actor.type === "board") return;
+  if (req.actor.type === "agent" && agentsHaveFullManagementPermissions()) return;
+  throw forbidden("Board access required");
 }
 
 export function assertInstanceAdmin(req: Request) {
-  assertBoard(req);
-  if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) {
-    return;
-  }
+  assertAuthenticated(req);
+  if (req.actor.type === "agent" && agentsHaveFullManagementPermissions()) return;
+  if (req.actor.type === "board" && (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin)) return;
   throw forbidden("Instance admin access required");
 }
 
