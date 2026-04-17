@@ -527,6 +527,111 @@ describe("buildIssueChatMessages", () => {
       },
     });
   });
+
+  it("does not emit duplicate run assistant messages when a run appears in both linked and live sources", () => {
+    const messages = buildIssueChatMessages({
+      comments: [],
+      timelineEvents: [],
+      linkedRuns: [{
+        runId: "run-1",
+        status: "running",
+        agentId: "agent-1",
+        agentName: "CodexCoder",
+        adapterType: "codex_local",
+        createdAt: new Date("2026-04-06T12:00:00.000Z"),
+        startedAt: new Date("2026-04-06T12:00:01.000Z"),
+        finishedAt: null,
+        hasStoredOutput: false,
+      }],
+      liveRuns: [{
+        id: "run-1",
+        issueId: "issue-1",
+        status: "running",
+        invocationSource: "assignment_wakeup",
+        triggerDetail: null,
+        startedAt: "2026-04-06T12:00:01.000Z",
+        finishedAt: null,
+        createdAt: "2026-04-06T12:00:00.000Z",
+        agentId: "agent-1",
+        agentName: "CodexCoder",
+        adapterType: "codex_local",
+      }],
+      activeRun: null,
+      transcriptsByRunId: new Map(),
+      issueId: "issue-1",
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      id: "run-assistant:run-1",
+      role: "assistant",
+      metadata: {
+        custom: expect.objectContaining({
+          kind: "live-run",
+          runId: "run-1",
+        }),
+      },
+    });
+  });
+
+  it("suppresses run-backed assistant messages once an assistant comment exists for the same run", () => {
+    const messages = buildIssueChatMessages({
+      comments: [
+        createComment({
+          id: "comment-agent-1",
+          authorAgentId: "agent-1",
+          authorUserId: null,
+          body: "Done.",
+          createdAt: new Date("2026-04-06T12:02:00.000Z"),
+          updatedAt: new Date("2026-04-06T12:02:00.000Z"),
+          runId: "run-1",
+          runAgentId: "agent-1",
+        }),
+      ],
+      timelineEvents: [],
+      linkedRuns: [{
+        runId: "run-1",
+        status: "succeeded",
+        agentId: "agent-1",
+        agentName: "CodexCoder",
+        adapterType: "codex_local",
+        createdAt: new Date("2026-04-06T12:00:00.000Z"),
+        startedAt: new Date("2026-04-06T12:00:01.000Z"),
+        finishedAt: new Date("2026-04-06T12:02:00.000Z"),
+        hasStoredOutput: true,
+      }],
+      liveRuns: [{
+        id: "run-1",
+        issueId: "issue-1",
+        status: "running",
+        invocationSource: "assignment_wakeup",
+        triggerDetail: null,
+        startedAt: "2026-04-06T12:00:01.000Z",
+        finishedAt: null,
+        createdAt: "2026-04-06T12:00:00.000Z",
+        agentId: "agent-1",
+        agentName: "CodexCoder",
+        adapterType: "codex_local",
+      }],
+      activeRun: null,
+      transcriptsByRunId: new Map([
+        ["run-1", [{ kind: "assistant", ts: "2026-04-06T12:01:00.000Z", text: "Working..." }]],
+      ]),
+      issueId: "issue-1",
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      id: "comment-agent-1",
+      role: "assistant",
+      metadata: {
+        custom: expect.objectContaining({
+          kind: "comment",
+          runId: "run-1",
+        }),
+      },
+    });
+  });
 });
 
 describe("stabilizeThreadMessages", () => {
@@ -592,5 +697,58 @@ describe("stabilizeThreadMessages", () => {
     );
 
     expect(secondStable.messages).toBe(firstStable.messages);
+  });
+
+  it("does not reuse a message object after its position changes", () => {
+    const firstPass = buildIssueChatMessages({
+      comments: [
+        createComment(),
+        createComment({
+          id: "comment-2",
+          body: "Second",
+          createdAt: new Date("2026-04-06T12:01:00.000Z"),
+          updatedAt: new Date("2026-04-06T12:01:00.000Z"),
+        }),
+      ],
+      timelineEvents: [],
+      linkedRuns: [],
+      liveRuns: [],
+      currentUserId: "user-1",
+    });
+
+    const firstStable = stabilizeThreadMessages(firstPass, [], new Map());
+    const secondPass = buildIssueChatMessages({
+      comments: [
+        createComment(),
+        createComment({
+          id: "comment-2",
+          body: "Second",
+          createdAt: new Date("2026-04-06T12:01:00.000Z"),
+          updatedAt: new Date("2026-04-06T12:01:00.000Z"),
+        }),
+      ],
+      timelineEvents: [
+        {
+          id: "event-1",
+          createdAt: new Date("2026-04-06T11:59:00.000Z"),
+          actorType: "user",
+          actorId: "user-1",
+          statusChange: undefined,
+          assigneeChange: undefined,
+        },
+      ],
+      linkedRuns: [],
+      liveRuns: [],
+      currentUserId: "user-1",
+    });
+
+    const secondStable = stabilizeThreadMessages(
+      secondPass,
+      firstStable.messages,
+      firstStable.cache,
+    );
+
+    expect(secondStable.messages[1]?.id).toBe("comment-1");
+    expect(secondStable.messages[1]).not.toBe(firstStable.messages[0]);
   });
 });

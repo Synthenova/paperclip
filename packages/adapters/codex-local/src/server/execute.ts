@@ -275,6 +275,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const workspaceBranch = asString(workspaceContext.branchName, "");
   const workspaceWorktreePath = asString(workspaceContext.worktreePath, "");
   const agentHome = asString(workspaceContext.agentHome, "");
+  const issueReferenceFilesDir = asString(workspaceContext.issueReferenceFilesDir, "");
   const workspaceHints = Array.isArray(context.paperclipWorkspaces)
     ? context.paperclipWorkspaces.filter(
         (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
@@ -560,9 +561,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       ? `Paperclip runtime env bridge: if \`PAPERCLIP_API_KEY\` is missing inside the Codex shell, source \`${runtimeEnvFilePath}\` before calling the Paperclip API.`
       : "";
   const additionalWritableDirs = (() => {
-    if (!agentHome) return [];
-    if (path.resolve(agentHome) === path.resolve(cwd)) return [];
-    return [agentHome];
+    const dirs = new Set<string>();
+    if (agentHome && path.resolve(agentHome) !== path.resolve(cwd)) {
+      dirs.add(agentHome);
+    }
+    if (issueReferenceFilesDir && path.resolve(issueReferenceFilesDir) !== path.resolve(cwd)) {
+      dirs.add(issueReferenceFilesDir);
+    }
+    return [...dirs];
   })();
   const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
@@ -598,7 +604,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         ? commandNotesWithFastMode
         : [
             ...commandNotesWithFastMode,
-            `Added agent-private writable directory alongside the issue workspace: ${additionalWritableDirs.join(", ")}`,
+            `Added writable directories alongside the active workspace: ${additionalWritableDirs.join(", ")}`,
           ];
     if (onMeta) {
       await onMeta({

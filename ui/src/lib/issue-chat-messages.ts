@@ -108,7 +108,11 @@ export function stabilizeThreadMessages(
 
   const stabilizedMessages = messages.map((message, index) => {
     const fingerprint = fingerprintThreadMessage(message);
-    const cached = previousById.get(message.id);
+    const previousMessage = previousMessages[index];
+    const cached =
+      previousMessage?.id === message.id
+        ? previousById.get(message.id)
+        : undefined;
     const stableMessage =
       cached && cached.fingerprint === fingerprint
         ? cached.message
@@ -761,6 +765,13 @@ export function buildIssueChatMessages(args: {
   } = args;
 
   const orderedMessages: MessageWithOrder[] = [];
+  const normalizedLiveRuns = normalizeLiveRuns(liveRuns, activeRun, issueId);
+  const normalizedLiveRunIds = new Set(normalizedLiveRuns.map((run) => run.id));
+  const commentRunIds = new Set(
+    comments
+      .filter((comment) => !!comment.authorAgentId && !!comment.runId)
+      .map((comment) => comment.runId as string),
+  );
 
   for (const comment of sortByCreated(comments)) {
     orderedMessages.push({
@@ -779,6 +790,8 @@ export function buildIssueChatMessages(args: {
   }
 
   for (const run of [...linkedRuns].sort((a, b) => toTimestamp(runTimestamp(a)) - toTimestamp(runTimestamp(b)))) {
+    if (commentRunIds.has(run.runId)) continue;
+    if (normalizedLiveRunIds.has(run.runId)) continue;
     const transcript = transcriptsByRunId?.get(run.runId) ?? [];
     const hasRunOutput = transcript.length > 0 || (hasOutputForRun?.(run.runId) ?? false);
     if (hasRunOutput || run.status !== "succeeded") {
@@ -805,7 +818,8 @@ export function buildIssueChatMessages(args: {
     });
   }
 
-  for (const run of normalizeLiveRuns(liveRuns, activeRun, issueId)) {
+  for (const run of normalizedLiveRuns) {
+    if (commentRunIds.has(run.id)) continue;
     orderedMessages.push({
       createdAtMs: toTimestamp(run.startedAt ?? run.createdAt),
       order: 3,

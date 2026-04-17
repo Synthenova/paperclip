@@ -113,6 +113,8 @@ export type {
   IssueComment,
   IssueDocument,
   IssueDocumentSummary,
+  IssueReferenceFile,
+  IssueReferenceFileKind,
   DocumentRevision,
   DocumentFormat,
   LegacyPlanDocument,

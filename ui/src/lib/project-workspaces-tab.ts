@@ -146,11 +146,6 @@ export function buildProjectWorkspaceSummaries(input: {
   for (const projectWorkspace of input.project.workspaces) {
     const key = `project:${projectWorkspace.id}`;
     if (summaries.has(key)) continue;
-    const shouldSurfaceWorkspace =
-      projectWorkspace.isPrimary
-      || Boolean(projectWorkspace.runtimeConfig?.workspaceRuntime)
-      || (projectWorkspace.runtimeServices?.length ?? 0) > 0;
-    if (!shouldSurfaceWorkspace) continue;
     summaries.set(key, {
       key,
       kind: "project_workspace",

@@ -9,6 +9,7 @@ import type {
   IssueComment,
   IssueDocument,
   IssueLabel,
+  IssueReferenceFile,
   IssueWorkProduct,
   UpsertIssueDocument,
 } from "@paperclipai/shared";
@@ -17,6 +18,17 @@ import { api } from "./client";
 export type IssueUpdateResponse = Issue & {
   comment?: IssueComment | null;
 };
+
+export interface IssueLocalFileMeta {
+  path: string;
+  name: string;
+  contentType: string;
+  byteSize: number;
+  updatedAt: string;
+  kind: "markdown" | "text" | "image" | "pdf" | "binary";
+  inline: boolean;
+  contentPath: string;
+}
 
 export const issuesApi = {
   list: (
@@ -154,6 +166,26 @@ export const issuesApi = {
     }
     return api.postForm<IssueAttachment>(`/companies/${companyId}/issues/${issueId}/attachments`, form);
   },
+  listReferenceFiles: (id: string) => api.get<IssueReferenceFile[]>(`/issues/${id}/reference-files`),
+  uploadReferenceFolder: (
+    companyId: string,
+    issueId: string,
+    input: { name: string; file: File },
+  ) => {
+    const form = new FormData();
+    form.append("name", input.name);
+    form.append("file", input.file);
+    return api.postForm<IssueReferenceFile>(`/companies/${companyId}/issues/${issueId}/reference-files/folder`, form);
+  },
+  createReferenceRepo: (
+    companyId: string,
+    issueId: string,
+    input: { name: string; repoUrl: string; repoRef?: string | null },
+  ) => api.post<IssueReferenceFile>(`/companies/${companyId}/issues/${issueId}/reference-files/repo`, input),
+  deleteReferenceFile: (issueId: string, referenceId: string) =>
+    api.delete<{ ok: true }>(`/issues/${issueId}/reference-files/${referenceId}`),
+  getLocalFileMeta: (issueId: string, filePath: string) =>
+    api.get<IssueLocalFileMeta>(`/issues/${issueId}/local-files/meta?path=${encodeURIComponent(filePath)}`),
   deleteAttachment: (id: string) => api.delete<{ ok: true }>(`/attachments/${id}`),
   listApprovals: (id: string) => api.get<Approval[]>(`/issues/${id}/approvals`),
   linkApproval: (id: string, approvalId: string) =>

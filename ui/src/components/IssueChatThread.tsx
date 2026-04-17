@@ -108,6 +108,7 @@ interface IssueChatMessageContext {
   onCancelQueued?: (commentId: string) => void;
   interruptingQueuedRunId?: string | null;
   onImageClick?: (src: string) => void;
+  onOpenLocalFile?: (filePath: string) => void;
 }
 
 const IssueChatCtx = createContext<IssueChatMessageContext>({
@@ -247,6 +248,7 @@ interface IssueChatThreadProps {
   interruptingQueuedRunId?: string | null;
   stoppingRunId?: string | null;
   onImageClick?: (src: string) => void;
+  onOpenLocalFile?: (filePath: string) => void;
   composerRef?: Ref<IssueChatComposerHandle>;
 }
 
@@ -375,7 +377,7 @@ function IssueChatFallbackThread({
                 </div>
                 <div className="space-y-2">
                   {lines.length > 0 ? lines.map((line, index) => (
-                    <MarkdownBody key={`${message.id}:fallback:${index}`}>{line}</MarkdownBody>
+                    <IssueChatFallbackLine key={`${message.id}:fallback:${index}`} line={line} />
                   )) : (
                     <p className="text-sm text-muted-foreground">No message content.</p>
                   )}
@@ -387,6 +389,11 @@ function IssueChatFallbackThread({
       )}
     </div>
   );
+}
+
+function IssueChatFallbackLine({ line }: { line: string }) {
+  const { onOpenLocalFile } = useContext(IssueChatCtx);
+  return <MarkdownBody onOpenLocalFile={onOpenLocalFile}>{line}</MarkdownBody>;
 }
 
 const DRAFT_DEBOUNCE_MS = 800;
@@ -455,13 +462,14 @@ function commentDateLabel(date: Date | string | undefined): string {
 }
 
 function IssueChatTextPart({ text, recessed }: { text: string; recessed?: boolean }) {
-  const { onImageClick } = useContext(IssueChatCtx);
+  const { onImageClick, onOpenLocalFile } = useContext(IssueChatCtx);
   return (
     <MarkdownBody
       className="text-sm leading-6"
       style={recessed ? { opacity: 0.55 } : undefined}
       softBreaks
       onImageClick={onImageClick}
+      onOpenLocalFile={onOpenLocalFile}
     >
       {text}
     </MarkdownBody>
@@ -1049,25 +1057,31 @@ function IssueChatAssistantMessage() {
   const chainOfThoughtLabel = typeof custom.chainOfThoughtLabel === "string" ? custom.chainOfThoughtLabel : null;
   const hasCoT = message.content.some((p) => p.type === "reasoning" || p.type === "tool-call");
   const isFoldable = !isRunning && !!chainOfThoughtLabel;
-  const [folded, setFolded] = useState(isFoldable);
-  const [prevFoldKey, setPrevFoldKey] = useState({ messageId: message.id, isFoldable });
-
-  // Derive fold state synchronously during render (not in useEffect) so the
-  // browser never paints the un-folded intermediate state — prevents the
-  // visible "jump" when loading a page with already-folded work sections.
-  if (message.id !== prevFoldKey.messageId || isFoldable !== prevFoldKey.isFoldable) {
-    const nextFolded = resolveAssistantMessageFoldedState({
+  const [foldState, setFoldState] = useState(() => ({
+    messageId: message.id,
+    isFoldable,
+    folded: isFoldable,
+  }));
+  const folded = foldState.messageId === message.id && foldState.isFoldable === isFoldable
+    ? foldState.folded
+    : resolveAssistantMessageFoldedState({
       messageId: message.id,
-      currentFolded: folded,
+      currentFolded: foldState.folded,
       isFoldable,
-      previousMessageId: prevFoldKey.messageId,
-      previousIsFoldable: prevFoldKey.isFoldable,
+      previousMessageId: foldState.messageId,
+      previousIsFoldable: foldState.isFoldable,
     });
-    setPrevFoldKey({ messageId: message.id, isFoldable });
-    if (nextFolded !== folded) {
-      setFolded(nextFolded);
+
+  useEffect(() => {
+    if (foldState.messageId === message.id && foldState.isFoldable === isFoldable && foldState.folded === folded) {
+      return;
     }
-  }
+    setFoldState({
+      messageId: message.id,
+      isFoldable,
+      folded,
+    });
+  }, [foldState.folded, foldState.isFoldable, foldState.messageId, folded, isFoldable, message.id]);
 
   const handleVote = async (
     vote: FeedbackVoteValue,
@@ -1095,7 +1109,11 @@ function IssueChatAssistantMessage() {
             <button
               type="button"
               className="group flex w-full items-center gap-2 py-0.5 text-left"
-              onClick={() => setFolded((v) => !v)}
+              onClick={() => setFoldState((current) => ({
+                messageId: message.id,
+                isFoldable,
+                folded: !folded,
+              }))}
             >
               <span className="text-sm font-medium text-foreground">{authorName}</span>
               <span className="text-xs text-muted-foreground/60">{chainOfThoughtLabel?.toLowerCase()}</span>
@@ -1881,6 +1899,7 @@ export function IssueChatThread({
   interruptingQueuedRunId = null,
   stoppingRunId = null,
   onImageClick,
+  onOpenLocalFile,
   composerRef,
 }: IssueChatThreadProps) {
   const location = useLocation();
@@ -2036,6 +2055,7 @@ export function IssueChatThread({
       onCancelQueued,
       interruptingQueuedRunId,
       onImageClick,
+      onOpenLocalFile,
     }),
     [
       feedbackVoteByTargetId,
@@ -2051,6 +2071,7 @@ export function IssueChatThread({
       onCancelQueued,
       interruptingQueuedRunId,
       onImageClick,
+      onOpenLocalFile,
     ],
   );
 

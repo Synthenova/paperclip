@@ -22,6 +22,8 @@ interface MarkdownBodyProps {
   resolveImageSrc?: (src: string) => string | null;
   /** Called when a user clicks an inline image */
   onImageClick?: (src: string) => void;
+  /** Called when a user clicks a Paperclip-managed local file path */
+  onOpenLocalFile?: (filePath: string) => void;
 }
 
 let mermaidLoaderPromise: Promise<typeof import("mermaid").default> | null = null;
@@ -99,6 +101,10 @@ function safeMarkdownUrlTransform(url: string): string {
   return parseMentionChipHref(url) ? url : defaultUrlTransform(url);
 }
 
+function isPaperclipManagedLocalFileHref(href: string | undefined): href is string {
+  return typeof href === "string" && href.startsWith("/") && href.includes("/.paperclip/");
+}
+
 function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: boolean }) {
   const renderId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const [svg, setSvg] = useState<string | null>(null);
@@ -162,6 +168,7 @@ export function MarkdownBody({
   linkIssueReferences = true,
   resolveImageSrc,
   onImageClick,
+  onOpenLocalFile,
 }: MarkdownBodyProps) {
   const { theme } = useTheme();
   const remarkPlugins: NonNullable<Options["remarkPlugins"]> = [remarkGfm];
@@ -238,6 +245,21 @@ export function MarkdownBody({
             )}
             data-mention-kind={parsed.kind}
             style={{ ...mergeWrapStyle(linkStyle as React.CSSProperties | undefined), ...mentionChipInlineStyle(parsed) }}
+          >
+            {linkChildren}
+          </a>
+        );
+      }
+      if (onOpenLocalFile && isPaperclipManagedLocalFileHref(href)) {
+        return (
+          <a
+            href={href}
+            rel="noreferrer"
+            style={mergeWrapStyle(linkStyle as React.CSSProperties | undefined)}
+            onClick={(event) => {
+              event.preventDefault();
+              onOpenLocalFile(href);
+            }}
           >
             {linkChildren}
           </a>

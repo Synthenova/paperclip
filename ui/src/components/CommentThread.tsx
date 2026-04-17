@@ -92,6 +92,7 @@ interface CommentThreadProps {
   onInterruptQueued?: (runId: string) => Promise<void>;
   interruptingQueuedRunId?: string | null;
   composerDisabledReason?: string | null;
+  onOpenLocalFile?: (filePath: string) => void;
 }
 
 const DRAFT_DEBOUNCE_MS = 800;
@@ -301,6 +302,7 @@ function CommentCard({
   voting = false,
   highlightCommentId,
   queued = false,
+  onOpenLocalFile,
 }: {
   comment: CommentWithRunMeta;
   agentMap?: Map<string, Agent>;
@@ -316,6 +318,7 @@ function CommentCard({
   voting?: boolean;
   highlightCommentId?: string | null;
   queued?: boolean;
+  onOpenLocalFile?: (filePath: string) => void;
 }) {
   const isHighlighted = highlightCommentId === comment.id;
   const isPending = comment.clientStatus === "pending";
@@ -379,7 +382,7 @@ function CommentCard({
           <CopyMarkdownButton text={comment.body} />
         </span>
       </div>
-      <MarkdownBody className="text-sm" softBreaks>{comment.body}</MarkdownBody>
+      <MarkdownBody className="text-sm" softBreaks onOpenLocalFile={onOpenLocalFile}>{comment.body}</MarkdownBody>
       {companyId && !isPending ? (
         <div className="mt-2 space-y-2">
           <PluginSlotOutlet
@@ -525,6 +528,7 @@ const TimelineList = memo(function TimelineList({
   onVote,
   votingTargetId,
   highlightCommentId,
+  onOpenLocalFile,
 }: {
   timeline: TimelineItem[];
   agentMap?: Map<string, Agent>;
@@ -547,6 +551,7 @@ const TimelineList = memo(function TimelineList({
   ) => Promise<void>;
   votingTargetId?: string | null;
   highlightCommentId?: string | null;
+  onOpenLocalFile?: (filePath: string) => void;
 }) {
   if (timeline.length === 0) {
     return <p className="text-sm text-muted-foreground">No timeline entries yet.</p>;
@@ -634,6 +639,7 @@ const TimelineList = memo(function TimelineList({
             onVote={onVote ? (vote, options) => onVote(comment.id, vote, options) : undefined}
             voting={votingTargetId === comment.id}
             highlightCommentId={highlightCommentId}
+            onOpenLocalFile={onOpenLocalFile}
           />
         );
       })}
@@ -672,6 +678,7 @@ export function CommentThread({
   onInterruptQueued,
   interruptingQueuedRunId = null,
   composerDisabledReason = null,
+  onOpenLocalFile,
 }: CommentThreadProps) {
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -877,6 +884,7 @@ export function CommentThread({
         votingTargetId={votingTargetId}
         highlightCommentId={highlightCommentId}
         feedbackTermsUrl={feedbackTermsUrl}
+        onOpenLocalFile={onOpenLocalFile}
       />
 
       {liveRunSlot}
@@ -909,6 +917,7 @@ export function CommentThread({
                 projectId={projectId}
                 highlightCommentId={highlightCommentId}
                 queued
+                onOpenLocalFile={onOpenLocalFile}
               />
             ))}
           </div>

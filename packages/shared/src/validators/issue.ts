@@ -183,6 +183,29 @@ export const createIssueAttachmentMetadataSchema = z.object({
 
 export type CreateIssueAttachmentMetadata = z.infer<typeof createIssueAttachmentMetadataSchema>;
 
+export const ISSUE_REFERENCE_FILE_KINDS = [
+  "document",
+  "attachment_file",
+  "folder_archive",
+  "repo_link",
+] as const;
+
+export const issueReferenceFileKindSchema = z.enum(ISSUE_REFERENCE_FILE_KINDS);
+
+export const createIssueReferenceFolderSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+});
+
+export const createIssueReferenceRepoSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  repoUrl: z.string().trim().url(),
+  repoRef: z.string().trim().max(200).nullable().optional(),
+});
+
+export type IssueReferenceFileKind = z.infer<typeof issueReferenceFileKindSchema>;
+export type CreateIssueReferenceFolder = z.infer<typeof createIssueReferenceFolderSchema>;
+export type CreateIssueReferenceRepo = z.infer<typeof createIssueReferenceRepoSchema>;
+
 export const ISSUE_DOCUMENT_FORMATS = ["markdown"] as const;
 
 export const issueDocumentFormatSchema = z.enum(ISSUE_DOCUMENT_FORMATS);

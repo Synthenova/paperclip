@@ -49,6 +49,7 @@ interface ClaudeRuntimeConfig {
   resolvedCommand: string;
   cwd: string;
   agentHome: string | null;
+  issueReferenceFilesDir: string | null;
   workspaceId: string | null;
   workspaceRepoUrl: string | null;
   workspaceRepoRef: string | null;
@@ -105,6 +106,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   const workspaceBranch = asString(workspaceContext.branchName, "") || null;
   const workspaceWorktreePath = asString(workspaceContext.worktreePath, "") || null;
   const agentHome = asString(workspaceContext.agentHome, "") || null;
+  const issueReferenceFilesDir = asString(workspaceContext.issueReferenceFilesDir, "") || null;
   const workspaceHints = Array.isArray(context.paperclipWorkspaces)
     ? context.paperclipWorkspaces.filter(
         (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
@@ -249,6 +251,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     resolvedCommand,
     cwd,
     agentHome,
+    issueReferenceFilesDir,
     workspaceId,
     workspaceRepoUrl,
     workspaceRepoRef,
@@ -323,6 +326,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     resolvedCommand,
     cwd,
     agentHome,
+    issueReferenceFilesDir,
     workspaceId,
     workspaceRepoUrl,
     workspaceRepoRef,
@@ -454,6 +458,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     if (agentHome && path.resolve(agentHome) !== path.resolve(cwd)) {
       args.push("--add-dir", agentHome);
     }
+    if (issueReferenceFilesDir && path.resolve(issueReferenceFilesDir) !== path.resolve(cwd)) {
+      args.push("--add-dir", issueReferenceFilesDir);
+    }
     if (extraArgs.length > 0) args.push(...extraArgs);
     return args;
   };
@@ -488,6 +495,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     }
     if (agentHome && path.resolve(agentHome) !== path.resolve(cwd)) {
       commandNotes.push(`Added agent-private directory alongside the active workspace via --add-dir ${agentHome}`);
+    }
+    if (issueReferenceFilesDir && path.resolve(issueReferenceFilesDir) !== path.resolve(cwd)) {
+      commandNotes.push(`Added issue reference files directory alongside the active workspace via --add-dir ${issueReferenceFilesDir}`);
     }
     if (onMeta) {
       await onMeta({

@@ -62,6 +62,14 @@ export function resolveDefaultAgentWorkspaceDir(agentId: string): string {
   return path.resolve(resolvePaperclipInstanceRoot(), "workspaces", trimmed);
 }
 
+export function resolveIssueReferenceFilesDir(issueId: string): string {
+  const trimmed = issueId.trim();
+  if (!PATH_SEGMENT_RE.test(trimmed)) {
+    throw new Error(`Invalid issue id for reference file path '${issueId}'.`);
+  }
+  return path.resolve(resolvePaperclipInstanceRoot(), "issue-reference-files", trimmed);
+}
+
 function sanitizeFriendlyPathSegment(value: string | null | undefined, fallback = "_default"): string {
   const trimmed = value?.trim() ?? "";
   if (!trimmed) return fallback;

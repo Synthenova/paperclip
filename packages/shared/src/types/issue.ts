@@ -82,6 +82,29 @@ export interface IssueDocument extends IssueDocumentSummary {
   body: string;
 }
 
+export type IssueReferenceFileKind = "document" | "attachment_file" | "folder_archive" | "repo_link";
+
+export interface IssueReferenceFile {
+  id: string;
+  companyId: string;
+  issueId: string;
+  kind: IssueReferenceFileKind;
+  name: string;
+  contentType: string | null;
+  byteSize: number | null;
+  attachmentId: string | null;
+  assetId: string | null;
+  documentKey: string | null;
+  repoUrl: string | null;
+  repoRef: string | null;
+  metadata: Record<string, unknown> | null;
+  createdByAgentId: string | null;
+  createdByUserId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  materializedPath?: string | null;
+}
+
 export interface DocumentRevision {
   id: string;
   companyId: string;
@@ -216,6 +239,7 @@ export interface Issue {
   blocks?: IssueRelationIssueSummary[];
   planDocument?: IssueDocument | null;
   documentSummaries?: IssueDocumentSummary[];
+  referenceFiles?: IssueReferenceFile[];
   legacyPlanDocument?: LegacyPlanDocument | null;
   project?: Project | null;
   goal?: Goal | null;

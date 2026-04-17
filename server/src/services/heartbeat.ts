@@ -33,13 +33,18 @@ import { getTelemetryClient } from "../telemetry.js";
 import { companySkillService } from "./company-skills.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { secretService } from "./secrets.js";
-import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
+import {
+  resolveDefaultAgentWorkspaceDir,
+  resolveIssueReferenceFilesDir,
+  resolveManagedProjectWorkspaceDir,
+} from "../home-paths.js";
 import {
   buildHeartbeatRunIssueComment,
   HEARTBEAT_RUN_RESULT_OUTPUT_MAX_CHARS,
   HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS,
   HEARTBEAT_RUN_SAFE_RESULT_JSON_MAX_BYTES,
   mergeHeartbeatRunResultJson,
+  summarizeHeartbeatRunResultJson,
 } from "./heartbeat-run-summary.js";
 import { logActivity, type LogActivityInput } from "./activity-log.js";
 import {
@@ -54,6 +59,7 @@ import {
   sanitizeRuntimeServiceBaseEnv,
 } from "./workspace-runtime.js";
 import { issueService } from "./issues.js";
+import { issueReferenceFileService } from "./issue-reference-files.js";
 import { executionWorkspaceService, mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
 import { workspaceOperationService } from "./workspace-operations.js";
 import { isProcessGroupAlive, terminateLocalService } from "./local-service-supervisor.js";
@@ -77,6 +83,7 @@ import {
   writePaperclipSkillSyncPreference,
 } from "@paperclipai/adapter-utils/server-utils";
 import { extractSkillMentionIds } from "@paperclipai/shared";
+import { getStorageService } from "../storage/index.js";
 
 const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
 const MAX_PERSISTED_LOG_CHUNK_CHARS = 64 * 1024;
@@ -1517,6 +1524,7 @@ export function heartbeatService(db: Db) {
   const secretsSvc = secretService(db);
   const companySkills = companySkillService(db);
   const issuesSvc = issueService(db);
+  const issueReferenceFilesSvc = issueReferenceFileService(db);
   const executionWorkspacesSvc = executionWorkspaceService(db);
   const workspaceOperationsSvc = workspaceOperationService(db);
   const activeRunExecutions = new Set<string>();
@@ -1524,6 +1532,7 @@ export function heartbeatService(db: Db) {
     cancelWorkForScope: cancelBudgetScopeWork,
   };
   const budgets = budgetService(db, budgetHooks);
+  const storage = getStorageService();
 
   async function getAgent(agentId: string) {
     return db
@@ -3452,7 +3461,7 @@ export function heartbeatService(db: Db) {
       runScopedMentionedSkillKeys,
     );
     const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId);
-    const runtimeConfig = {
+    const runtimeConfig: Record<string, unknown> = {
       ...effectiveResolvedConfig,
       paperclipRuntimeSkills: runtimeSkillEntries,
     };
@@ -3653,7 +3662,12 @@ export function heartbeatService(db: Db) {
           ]
         : []),
     ];
-    context.paperclipWorkspace = {
+    const agentHome = await (async () => {
+      const home = resolveDefaultAgentWorkspaceDir(agent.id);
+      await fs.mkdir(home, { recursive: true });
+      return home;
+    })();
+    const paperclipWorkspace: Record<string, unknown> = {
       cwd: executionWorkspace.cwd,
       source: executionWorkspace.source,
       mode: effectiveExecutionWorkspaceMode,
@@ -3664,12 +3678,77 @@ export function heartbeatService(db: Db) {
       repoRef: executionWorkspace.repoRef,
       branchName: executionWorkspace.branchName,
       worktreePath: executionWorkspace.worktreePath,
-      agentHome: await (async () => {
-        const home = resolveDefaultAgentWorkspaceDir(agent.id);
-        await fs.mkdir(home, { recursive: true });
-        return home;
-      })(),
+      agentHome,
     };
+    context.paperclipWorkspace = paperclipWorkspace;
+    let materializedIssueReferenceFiles:
+      | Awaited<ReturnType<typeof issueReferenceFilesSvc.materializeForIssue>>
+      | null = null;
+    if (issueId) {
+      const issueReferenceFilesDir = resolveIssueReferenceFilesDir(issueId);
+      logger.info(
+        {
+          runId: run.id,
+          issueId,
+          companyId: agent.companyId,
+          issueReferenceFilesDir,
+        },
+        "preparing issue reference files for heartbeat run",
+      );
+      try {
+        materializedIssueReferenceFiles = await issueReferenceFilesSvc.materializeForIssue({
+          companyId: agent.companyId,
+          issueId,
+          rootDir: issueReferenceFilesDir,
+          storage,
+        });
+      } catch (err) {
+        logger.error(
+          {
+            err,
+            runId: run.id,
+            issueId,
+            companyId: agent.companyId,
+            issueReferenceFilesDir,
+          },
+          "issue reference file materialization failed",
+        );
+        throw err;
+      }
+      if (materializedIssueReferenceFiles.references.length > 0) {
+        paperclipWorkspace.issueReferenceFilesDir = materializedIssueReferenceFiles.rootDir;
+        context.paperclipIssueReferenceFiles = materializedIssueReferenceFiles.references.map((entry) => ({
+          id: entry.id,
+          kind: entry.kind,
+          name: entry.name,
+          materializedPath: entry.materializedPath ?? null,
+        }));
+        logger.info(
+          {
+            runId: run.id,
+            issueId,
+            companyId: agent.companyId,
+            issueReferenceFilesDir: materializedIssueReferenceFiles.rootDir,
+            materializedCount: materializedIssueReferenceFiles.references.length,
+          },
+          "issue reference files attached to heartbeat context",
+        );
+      } else {
+        delete paperclipWorkspace.issueReferenceFilesDir;
+        delete context.paperclipIssueReferenceFiles;
+        logger.info(
+          {
+            runId: run.id,
+            issueId,
+            companyId: agent.companyId,
+            issueReferenceFilesDir,
+          },
+          "heartbeat run has no materialized issue reference files",
+        );
+      }
+    } else {
+      delete context.paperclipIssueReferenceFiles;
+    }
     context.paperclipWorkspaces = resolvedWorkspace.workspaceHints;
     const runtimeServiceIntents = (() => {
       const runtimeConfig = parseObject(resolvedConfig.workspaceRuntime);
@@ -3759,6 +3838,44 @@ export function heartbeatService(db: Db) {
         }
         context.paperclipSessionHandoffMarkdown = historyLines.join('\n');
       }
+    }
+
+    const runtimeLocationNotes: string[] = [];
+    const issueReferenceFilesDir = asString(paperclipWorkspace.issueReferenceFilesDir, "").trim();
+    if (issueReferenceFilesDir) {
+      runtimeLocationNotes.push("## Runtime Paths");
+      runtimeLocationNotes.push(`Issue reference files are available at: \`${issueReferenceFilesDir}\``);
+      const visibleEntries = (materializedIssueReferenceFiles?.references ?? [])
+        .map((entry) => entry.materializedPath)
+        .filter((value): value is string => typeof value === "string" && value.length > 0);
+      if (visibleEntries.length > 0) {
+        runtimeLocationNotes.push("");
+        runtimeLocationNotes.push("Materialized issue references:");
+        for (const entryPath of visibleEntries) {
+          runtimeLocationNotes.push(`- \`${entryPath}\``);
+        }
+      }
+    }
+    if (path.resolve(agentHome) !== path.resolve(executionWorkspace.cwd)) {
+      if (runtimeLocationNotes.length === 0) {
+        runtimeLocationNotes.push("## Runtime Paths");
+      }
+      runtimeLocationNotes.push(`Agent workspace is available at: \`${agentHome}\``);
+    }
+    if (runtimeLocationNotes.length > 0) {
+      const appendedNotes = runtimeLocationNotes.join("\n");
+      context.paperclipSessionHandoffMarkdown = context.paperclipSessionHandoffMarkdown
+        ? `${context.paperclipSessionHandoffMarkdown}\n\n---\n\n${appendedNotes}`
+        : appendedNotes;
+      logger.info(
+        {
+          runId: run.id,
+          issueId: issueId ?? null,
+          companyId: agent.companyId,
+          runtimeLocationNotes,
+        },
+        "appended runtime location notes to heartbeat prompt context",
+      );
     }
 
     const runtimeForAdapter = {
@@ -5373,7 +5490,11 @@ export function heartbeatService(db: Db) {
 
     listRunsForTaskKey: async (companyId: string, agentId: string, taskKey: string) => {
       const rows = await db
-        .select(heartbeatRunListColumns)
+        .select({
+          ...heartbeatRunListColumns,
+          contextSnapshot: heartbeatRuns.contextSnapshot,
+          resultJson: heartbeatRunSafeResultJsonColumn,
+        })
         .from(heartbeatRuns)
         .where(
           and(

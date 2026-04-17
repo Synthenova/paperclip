@@ -69,8 +69,8 @@ function saveFoldedDocumentKeys(issueId: string, keys: string[]) {
   window.localStorage.setItem(getFoldedDocumentsStorageKey(issueId), JSON.stringify(keys));
 }
 
-function renderBody(body: string, className?: string) {
-  return <MarkdownBody className={className} softBreaks={false}>{body}</MarkdownBody>;
+function renderBody(body: string, className?: string, onOpenLocalFile?: (filePath: string) => void) {
+  return <MarkdownBody className={className} softBreaks={false} onOpenLocalFile={onOpenLocalFile}>{body}</MarkdownBody>;
 }
 
 function isPlanKey(key: string) {
@@ -137,6 +137,7 @@ export function IssueDocumentsSection({
   imageUploadHandler,
   onVote,
   extraActions,
+  onOpenLocalFile,
 }: {
   issue: Issue;
   canDeleteDocuments: boolean;
@@ -151,6 +152,7 @@ export function IssueDocumentsSection({
     options?: { allowSharing?: boolean; reason?: string },
   ) => Promise<void>;
   extraActions?: ReactNode;
+  onOpenLocalFile?: (filePath: string) => void;
 }) {
   const queryClient = useQueryClient();
   const location = useLocation();
@@ -778,7 +780,7 @@ export function IssueDocumentsSection({
             </span>
           </div>
           <div className={documentBodyPaddingClassName}>
-            {renderBody(issue.legacyPlanDocument.body, documentBodyContentClassName)}
+            {renderBody(issue.legacyPlanDocument.body, documentBodyContentClassName, onOpenLocalFile)}
           </div>
         </div>
       ) : null}
@@ -1065,7 +1067,7 @@ export function IssueDocumentsSection({
                           {!isPlanKey(doc.key) && activeConflict.serverDocument.title ? (
                             <p className="mb-2 text-sm font-medium">{activeConflict.serverDocument.title}</p>
                           ) : null}
-                          {renderBody(activeConflict.serverDocument.body, "text-[14px] leading-7")}
+                          {renderBody(activeConflict.serverDocument.body, "text-[14px] leading-7", onOpenLocalFile)}
                         </div>
                       )}
                     </div>
@@ -1087,7 +1089,7 @@ export function IssueDocumentsSection({
                   >
                     {isHistoricalPreview ? (
                       <div className="rounded-md border border-amber-500/20 bg-background/50 p-3">
-                        {renderBody(displayedBody, documentBodyContentClassName)}
+                        {renderBody(displayedBody, documentBodyContentClassName, onOpenLocalFile)}
                       </div>
                     ) : activeDraft ? (
                       <MarkdownEditor
@@ -1111,7 +1113,7 @@ export function IssueDocumentsSection({
                       />
                     ) : (
                       <div className="rounded-md border border-border/60 bg-background/40 p-3">
-                        {renderBody(displayedBody, documentBodyContentClassName)}
+                        {renderBody(displayedBody, documentBodyContentClassName, onOpenLocalFile)}
                       </div>
                     )}
                   </div>

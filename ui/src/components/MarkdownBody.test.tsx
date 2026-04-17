@@ -209,6 +209,23 @@ describe("MarkdownBody", () => {
     expect(html).toContain('style="overflow-wrap:anywhere;word-break:break-word"');
   });
 
+  it("intercepts Paperclip-managed local file links when a viewer callback is provided", () => {
+    const onOpenLocalFile = vi.fn();
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <ThemeProvider>
+          <MarkdownBody onOpenLocalFile={onOpenLocalFile}>
+            {"[artifact](/home/lamrin/.paperclip/instances/default/projects/company/project/repo/file.md)"}
+          </MarkdownBody>
+        </ThemeProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(html).toContain('href="/home/lamrin/.paperclip/instances/default/projects/company/project/repo/file.md"');
+    expect(html).toContain(">artifact</a>");
+    expect(onOpenLocalFile).not.toHaveBeenCalled();
+  });
+
   it("keeps fenced code blocks width-bounded and horizontally scrollable", () => {
     const html = renderMarkdown("```text\nGET /heartbeat-runs/ca5d23fc-c15b-4826-8ff1-2b6dd11be096/log?offset=2062357&limitBytes=256000\n```");
 

@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
@@ -7,6 +10,8 @@ import { issueExecutionDecisions } from "@paperclipai/db";
 import {
   addIssueCommentSchema,
   createIssueAttachmentMetadataSchema,
+  createIssueReferenceFolderSchema,
+  createIssueReferenceRepoSchema,
   createIssueWorkProductSchema,
   createIssueLabelSchema,
   checkoutIssueSchema,
@@ -38,6 +43,7 @@ import {
   heartbeatService,
   instanceSettingsService,
   issueApprovalService,
+  issueReferenceFileService,
   issueService,
   documentService,
   logActivity,
@@ -66,6 +72,7 @@ import {
   parseIssueExecutionState,
 } from "../services/issue-execution-policy.js";
 import { agentsHaveFullManagementPermissions } from "../services/full-agent-access.js";
+import { resolvePaperclipInstanceRoot } from "../home-paths.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const updateIssueRouteSchema = updateIssueSchema.extend({
@@ -92,6 +99,72 @@ type ExecutionStageWakeContext = {
   lastDecisionOutcome: ParsedExecutionState["lastDecisionOutcome"];
   allowedActions: string[];
 };
+
+type LocalIssueFileKind = "markdown" | "text" | "image" | "pdf" | "binary";
+
+function localIssueFileContentType(filePath: string) {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "text/markdown; charset=utf-8";
+  if (lower.endsWith(".txt") || lower.endsWith(".log")) return "text/plain; charset=utf-8";
+  if (lower.endsWith(".json")) return "application/json";
+  if (lower.endsWith(".csv")) return "text/csv; charset=utf-8";
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".svg")) return SVG_CONTENT_TYPE;
+  return "application/octet-stream";
+}
+
+function localIssueFileKindForContentType(contentType: string): LocalIssueFileKind {
+  if (contentType === "text/markdown; charset=utf-8") return "markdown";
+  if (contentType.startsWith("text/") || contentType === "application/json") return "text";
+  if (contentType.startsWith("image/")) return "image";
+  if (contentType === "application/pdf") return "pdf";
+  return "binary";
+}
+
+function isPathInsideRoot(candidatePath: string, rootPath: string) {
+  const relative = path.relative(rootPath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function resolveApprovedIssueLocalFilePath(rawPath: string) {
+  const requestedPath = rawPath.trim();
+  if (!requestedPath) {
+    throw new HttpError(400, "File path is required");
+  }
+  const resolvedPath = path.resolve(requestedPath);
+  const realPath = await fs.realpath(resolvedPath).catch((err: NodeJS.ErrnoException) => {
+    if (err?.code === "ENOENT") {
+      throw new HttpError(404, "Local file not found");
+    }
+    throw err;
+  });
+  const instanceRoot = resolvePaperclipInstanceRoot();
+  const allowedRoots = [
+    path.resolve(instanceRoot, "projects"),
+    path.resolve(instanceRoot, "issue-reference-files"),
+    path.resolve(instanceRoot, "workspaces"),
+  ];
+  if (!allowedRoots.some((rootPath) => isPathInsideRoot(realPath, rootPath))) {
+    throw new HttpError(403, "Local file path is outside approved Paperclip roots");
+  }
+  const stat = await fs.stat(realPath);
+  if (!stat.isFile()) {
+    throw new HttpError(422, "Requested path is not a file");
+  }
+  const contentType = normalizeContentType(localIssueFileContentType(realPath));
+  return {
+    realPath,
+    stat,
+    contentType,
+    kind: localIssueFileKindForContentType(contentType),
+    inline: isInlineAttachmentContentType(contentType),
+    name: path.basename(realPath),
+  };
+}
 
 function executionPrincipalsEqual(
   left: ParsedExecutionState["currentParticipant"] | null,
@@ -310,6 +383,7 @@ export function issueRoutes(
   const executionWorkspacesSvc = executionWorkspaceService(db);
   const workProductsSvc = workProductService(db);
   const documentsSvc = documentService(db);
+  const issueReferenceFilesSvc = issueReferenceFileService(db);
   const routinesSvc = routineService(db);
   const feedbackExportService = opts?.feedbackExportService;
   const upload = multer({
@@ -464,6 +538,86 @@ export function issueRoutes(
     }
 
     return runToInterrupt?.status === "running" ? runToInterrupt : null;
+  }
+
+  async function restartIssueRunAfterReferenceFileAdded(params: {
+    issue: {
+      id: string;
+      companyId: string;
+      identifier: string;
+      title: string;
+      status: string;
+      assigneeAgentId: string | null;
+      executionRunId?: string | null;
+    };
+    actor: ReturnType<typeof getActorInfo>;
+    referenceFileId: string;
+    kind: "folder_archive" | "repo_link";
+  }) {
+    if (!params.issue.assigneeAgentId || params.issue.status === "backlog") {
+      return;
+    }
+
+    const runToInterrupt = await resolveActiveIssueRun(params.issue);
+    if (!runToInterrupt) {
+      return;
+    }
+
+    const cancelled = await heartbeat.cancelRun(runToInterrupt.id);
+    if (!cancelled) {
+      return;
+    }
+
+    await logActivity(db, {
+      companyId: cancelled.companyId,
+      actorType: params.actor.actorType,
+      actorId: params.actor.actorId,
+      agentId: params.actor.agentId,
+      runId: params.actor.runId,
+      action: "heartbeat.cancelled",
+      entityType: "heartbeat_run",
+      entityId: cancelled.id,
+      details: {
+        agentId: cancelled.agentId,
+        source: "issue_reference_file_added",
+        issueId: params.issue.id,
+        issueIdentifier: params.issue.identifier,
+        issueTitle: params.issue.title,
+        issueReferenceFileId: params.referenceFileId,
+        kind: params.kind,
+      },
+    });
+
+    heartbeat
+      .wakeup(params.issue.assigneeAgentId, {
+        source: "automation",
+        triggerDetail: "system",
+        reason: "issue_reference_files_updated",
+        payload: {
+          issueId: params.issue.id,
+          mutation: "reference_file.create",
+          issueReferenceFileId: params.referenceFileId,
+          kind: params.kind,
+          interruptedRunId: cancelled.id,
+        },
+        requestedByActorType: params.actor.actorType,
+        requestedByActorId: params.actor.actorId,
+        contextSnapshot: {
+          issueId: params.issue.id,
+          taskId: params.issue.id,
+          source: "issue.reference_file",
+          wakeReason: "issue_reference_files_updated",
+          issueReferenceFileId: params.referenceFileId,
+          kind: params.kind,
+          interruptedRunId: cancelled.id,
+        },
+      })
+      .catch((err) =>
+        logger.warn(
+          { err, issueId: params.issue.id, agentId: params.issue.assigneeAgentId, referenceFileId: params.referenceFileId },
+          "failed to wake agent after issue reference file was added",
+        ),
+      );
   }
 
   async function normalizeIssueAssigneeAgentReference(
@@ -728,12 +882,13 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    const [{ project, goal }, ancestors, mentionedProjectIds, documentPayload, relations] = await Promise.all([
+    const [{ project, goal }, ancestors, mentionedProjectIds, documentPayload, relations, referenceFiles] = await Promise.all([
       resolveIssueProjectAndGoal(issue),
       svc.getAncestors(issue.id),
       svc.findMentionedProjectIds(issue.id, { includeCommentBodies: false }),
       documentsSvc.getIssueDocumentPayload(issue),
       svc.getRelationSummaries(issue.id),
+      issueReferenceFilesSvc.listForIssue(issue.id),
     ]);
     const mentionedProjects = mentionedProjectIds.length > 0
       ? await projectsSvc.listByIds(issue.companyId, mentionedProjectIds)
@@ -754,6 +909,7 @@ export function issueRoutes(
       mentionedProjects,
       currentExecutionWorkspace,
       workProducts,
+      referenceFiles,
     });
   });
 
@@ -771,7 +927,7 @@ export function issueRoutes(
         ? req.query.wakeCommentId.trim()
         : null;
 
-    const [{ project, goal }, ancestors, commentCursor, wakeComment, relations, attachments] =
+    const [{ project, goal }, ancestors, commentCursor, wakeComment, relations, attachments, documents, referenceFiles] =
       await Promise.all([
       resolveIssueProjectAndGoal(issue),
       svc.getAncestors(issue.id),
@@ -779,6 +935,8 @@ export function issueRoutes(
       wakeCommentId ? svc.getComment(wakeCommentId) : null,
       svc.getRelationSummaries(issue.id),
       svc.listAttachments(issue.id),
+      documentsSvc.listIssueDocuments(issue.id),
+      issueReferenceFilesSvc.listForIssue(issue.id),
     ]);
 
     res.json({
@@ -834,6 +992,22 @@ export function issueRoutes(
         byteSize: a.byteSize,
         contentPath: withContentPath(a).contentPath,
         createdAt: a.createdAt,
+      })),
+      documents: documents.map((document) => ({
+        id: document.id,
+        key: document.key,
+        title: document.title,
+        format: document.format,
+        updatedAt: document.updatedAt,
+      })),
+      referenceFiles: referenceFiles.map((entry) => ({
+        id: entry.id,
+        kind: entry.kind,
+        name: entry.name,
+        documentKey: entry.documentKey,
+        attachmentId: entry.attachmentId,
+        repoUrl: entry.repoUrl,
+        repoRef: entry.repoRef,
       })),
     });
   });
@@ -2639,6 +2813,18 @@ export function issueRoutes(
     res.json(attachments.map(withContentPath));
   });
 
+  router.get("/issues/:id/reference-files", async (req, res) => {
+    const issueId = req.params.id as string;
+    const issue = await svc.getById(issueId);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+    const referenceFiles = await issueReferenceFilesSvc.listForIssue(issueId);
+    res.json(referenceFiles);
+  });
+
   router.post("/companies/:companyId/issues/:issueId/attachments", async (req, res) => {
     const companyId = req.params.companyId as string;
     const issueId = req.params.issueId as string;
@@ -2726,6 +2912,214 @@ export function issueRoutes(
     res.status(201).json(withContentPath(attachment));
   });
 
+  router.post("/companies/:companyId/issues/:issueId/reference-files/folder", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const issueId = req.params.issueId as string;
+    assertCompanyAccess(req, companyId);
+    const issue = await svc.getById(issueId);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    if (issue.companyId !== companyId) {
+      res.status(422).json({ error: "Issue does not belong to company" });
+      return;
+    }
+
+    try {
+      await runSingleFileUpload(req, res);
+    } catch (err) {
+      if (err instanceof multer.MulterError) {
+        if (err.code === "LIMIT_FILE_SIZE") {
+          res.status(422).json({ error: `Attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
+          return;
+        }
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
+
+    const file = (req as Request & { file?: { mimetype: string; buffer: Buffer; originalname: string } }).file;
+    if (!file) {
+      res.status(400).json({ error: "Missing file field 'file'" });
+      return;
+    }
+    if (file.buffer.length <= 0) {
+      res.status(422).json({ error: "Folder archive is empty" });
+      return;
+    }
+
+    const parsed = createIssueReferenceFolderSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid folder reference metadata", details: parsed.error.issues });
+      return;
+    }
+
+    const actor = getActorInfo(req);
+    const stored = await storage.putFile({
+      companyId,
+      namespace: `issues/${issueId}/reference-folders`,
+      originalFilename: file.originalname || `${parsed.data.name}.zip`,
+      contentType: "application/zip",
+      body: file.buffer,
+    });
+
+    const reference = await issueReferenceFilesSvc.createFolderArchive({
+      companyId,
+      issueId,
+      name: parsed.data.name,
+      provider: stored.provider,
+      objectKey: stored.objectKey,
+      contentType: stored.contentType,
+      byteSize: stored.byteSize,
+      sha256: stored.sha256,
+      originalFilename: stored.originalFilename,
+      metadata: {},
+      createdByAgentId: actor.agentId,
+      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+    });
+
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.reference_file_added",
+      entityType: "issue",
+      entityId: issueId,
+      details: {
+        issueReferenceFileId: reference.id,
+        kind: "folder_archive",
+        name: parsed.data.name,
+      },
+    });
+
+    await restartIssueRunAfterReferenceFileAdded({
+      issue: {
+        ...issue,
+        identifier: issue.identifier ?? issue.id,
+      },
+      actor,
+      referenceFileId: reference.id,
+      kind: "folder_archive",
+    });
+
+    res.status(201).json(reference);
+  });
+
+  router.post("/companies/:companyId/issues/:issueId/reference-files/repo", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const issueId = req.params.issueId as string;
+    assertCompanyAccess(req, companyId);
+    const issue = await svc.getById(issueId);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    if (issue.companyId !== companyId) {
+      res.status(422).json({ error: "Issue does not belong to company" });
+      return;
+    }
+
+    const parsed = createIssueReferenceRepoSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid repo reference metadata", details: parsed.error.issues });
+      return;
+    }
+
+    const actor = getActorInfo(req);
+    const reference = await issueReferenceFilesSvc.createRepoLink({
+      companyId,
+      issueId,
+      name: parsed.data.name,
+      repoUrl: parsed.data.repoUrl,
+      repoRef: parsed.data.repoRef ?? null,
+      createdByAgentId: actor.agentId,
+      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+    });
+
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.reference_file_added",
+      entityType: "issue",
+      entityId: issueId,
+      details: {
+        issueReferenceFileId: reference.id,
+        kind: "repo_link",
+        name: parsed.data.name,
+        repoUrl: parsed.data.repoUrl,
+        repoRef: parsed.data.repoRef ?? null,
+      },
+    });
+
+    await restartIssueRunAfterReferenceFileAdded({
+      issue: {
+        ...issue,
+        identifier: issue.identifier ?? issue.id,
+      },
+      actor,
+      referenceFileId: reference.id,
+      kind: "repo_link",
+    });
+
+    res.status(201).json(reference);
+  });
+
+  router.get("/issues/:id/local-files/meta", async (req, res) => {
+    const issueId = req.params.id as string;
+    const issue = await svc.getById(issueId);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+
+    const pathParam = typeof req.query.path === "string" ? req.query.path : "";
+    const localFile = await resolveApprovedIssueLocalFilePath(pathParam);
+    res.json({
+      path: localFile.realPath,
+      name: localFile.name,
+      contentType: localFile.contentType,
+      byteSize: localFile.stat.size,
+      updatedAt: localFile.stat.mtime,
+      kind: localFile.kind,
+      inline: localFile.inline,
+      contentPath: `/api/issues/${issue.id}/local-files/content?path=${encodeURIComponent(localFile.realPath)}`,
+    });
+  });
+
+  router.get("/issues/:id/local-files/content", async (req, res, next) => {
+    const issueId = req.params.id as string;
+    const issue = await svc.getById(issueId);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+
+    const pathParam = typeof req.query.path === "string" ? req.query.path : "";
+    const localFile = await resolveApprovedIssueLocalFilePath(pathParam);
+    res.setHeader("Content-Type", localFile.contentType);
+    res.setHeader("Content-Length", String(localFile.stat.size));
+    res.setHeader("Cache-Control", "private, max-age=60");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    if (localFile.contentType === SVG_CONTENT_TYPE) {
+      res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'");
+    }
+    const disposition = localFile.inline ? "inline" : "attachment";
+    res.setHeader("Content-Disposition", `${disposition}; filename="${localFile.name.replaceAll("\"", "")}"`);
+
+    const stream = createReadStream(localFile.realPath);
+    stream.on("error", (err) => next(err));
+    stream.pipe(res);
+  });
+
   router.get("/attachments/:attachmentId/content", async (req, res, next) => {
     const attachmentId = req.params.attachmentId as string;
     const attachment = await svc.getAttachmentById(attachmentId);
@@ -2787,6 +3181,56 @@ export function issueRoutes(
       entityId: removed.issueId,
       details: {
         attachmentId: removed.id,
+      },
+    });
+
+    res.json({ ok: true });
+  });
+
+  router.delete("/issues/:issueId/reference-files/:referenceId", async (req, res) => {
+    const issueId = req.params.issueId as string;
+    const referenceId = req.params.referenceId as string;
+    const issue = await svc.getById(issueId);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+
+    const existing = await issueReferenceFilesSvc.getManagedById(referenceId);
+    if (!existing || existing.issueId !== issueId) {
+      res.status(404).json({ error: "Reference file not found" });
+      return;
+    }
+
+    if (existing.assetId && existing.objectKey) {
+      try {
+        await storage.deleteObject(existing.companyId, existing.objectKey);
+      } catch (err) {
+        logger.warn({ err, referenceId }, "storage delete failed while removing issue reference file");
+      }
+    }
+
+    const removed = await issueReferenceFilesSvc.removeManaged(referenceId);
+    if (!removed) {
+      res.status(404).json({ error: "Reference file not found" });
+      return;
+    }
+
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId: issue.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.reference_file_removed",
+      entityType: "issue",
+      entityId: issueId,
+      details: {
+        issueReferenceFileId: removed.id,
+        kind: removed.kind,
+        name: removed.name,
       },
     });
 

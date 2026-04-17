@@ -63,6 +63,7 @@ import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssuesList } from "../components/IssuesList";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
+import { LocalFileViewerDialog } from "../components/LocalFileViewerDialog";
 import type { MentionOption } from "../components/MarkdownEditor";
 import { ImageGalleryModal } from "../components/ImageGalleryModal";
 import { ScrollToBottom } from "../components/ScrollToBottom";
@@ -82,6 +83,7 @@ import { formatIssueActivityAction } from "@/lib/activity-format";
 import { buildIssuePropertiesPanelKey } from "../lib/issue-properties-panel-key";
 import { shouldRenderRichSubIssuesSection } from "../lib/issue-detail-subissues";
 import { buildSubIssueDefaultsForViewer } from "../lib/subIssueDefaults";
+import { createZipArchive } from "../lib/zip";
 import {
   Activity as ActivityIcon,
   Archive,
@@ -109,6 +111,7 @@ import {
   type Issue,
   type IssueAttachment,
   type IssueComment,
+  type IssueReferenceFile,
 } from "@paperclipai/shared";
 
 type CommentReassignment = IssueCommentReassignment;
@@ -193,6 +196,40 @@ function titleizeFilename(input: string) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function buildFolderArchiveFile(files: FileList) {
+  const selectedFiles = Array.from(files).filter((file) => (file.webkitRelativePath || file.name).length > 0);
+  if (selectedFiles.length === 0) {
+    throw new Error("No folder files were selected.");
+  }
+  const firstRelativePath = selectedFiles[0]!.webkitRelativePath || selectedFiles[0]!.name;
+  const rootName = firstRelativePath.split("/").filter(Boolean)[0] ?? (fileBaseName(selectedFiles[0]!.name) || "folder");
+  const archiveEntries: Record<string, { encoding: "base64"; data: string; contentType: string }> = {};
+  for (const file of selectedFiles) {
+    const relativePath = file.webkitRelativePath || file.name;
+    const pathParts = relativePath.split("/").filter(Boolean);
+    const archivePath = pathParts.length > 1 ? pathParts.slice(1).join("/") : pathParts[0]!;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    archiveEntries[archivePath] = {
+      encoding: "base64",
+      data: bytesToBase64(bytes),
+      contentType: file.type || "application/octet-stream",
+    };
+  }
+  const archiveBytes = createZipArchive(archiveEntries, rootName);
+  const archiveBuffer = new ArrayBuffer(archiveBytes.byteLength);
+  new Uint8Array(archiveBuffer).set(archiveBytes);
+  return {
+    name: rootName,
+    file: new File([archiveBuffer], `${rootName}.zip`, { type: "application/zip" }),
+  };
 }
 
 function mergeOptimisticFeedbackVote(
@@ -522,6 +559,7 @@ type IssueDetailChatTabProps = {
   onCancelQueued: (commentId: string) => void;
   interruptingQueuedRunId: string | null;
   onImageClick: (src: string) => void;
+  onOpenLocalFile: (filePath: string) => void;
 };
 
 const IssueDetailChatTab = memo(function IssueDetailChatTab({
@@ -554,6 +592,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   onCancelQueued,
   interruptingQueuedRunId,
   onImageClick,
+  onOpenLocalFile,
 }: IssueDetailChatTabProps) {
   const { data: activity } = useQuery({
     queryKey: queryKeys.issues.activity(issueId),
@@ -706,6 +745,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
             }
           : undefined}
         onImageClick={onImageClick}
+        onOpenLocalFile={onOpenLocalFile}
       />
     </div>
   );
@@ -873,11 +913,18 @@ export function IssueDetail() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
+  const [referenceFileError, setReferenceFileError] = useState<string | null>(null);
+  const [showRepoReferenceForm, setShowRepoReferenceForm] = useState(false);
+  const [repoReferenceName, setRepoReferenceName] = useState("");
+  const [repoReferenceUrl, setRepoReferenceUrl] = useState("");
+  const [repoReferenceRef, setRepoReferenceRef] = useState("");
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
+  const [localFileViewerPath, setLocalFileViewerPath] = useState<string | null>(null);
   const [optimisticComments, setOptimisticComments] = useState<OptimisticIssueComment[]>([]);
   const [pendingCommentComposerFocusKey, setPendingCommentComposerFocusKey] = useState(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
   const commentComposerRef = useRef<IssueChatComposerHandle | null>(null);
   const cancelledQueuedOptimisticCommentIdsRef = useRef(new Set<string>());
@@ -900,6 +947,7 @@ export function IssueDetail() {
     enabled: !!issueId,
   });
   const resolvedCompanyId = issue?.companyId ?? selectedCompanyId;
+  const referenceFiles = issue?.referenceFiles ?? [];
   const commentComposerDisabledReason = useMemo(() => {
     if (!issue?.currentExecutionWorkspace || !isClosedIsolatedExecutionWorkspace(issue.currentExecutionWorkspace)) {
       return null;
@@ -1033,23 +1081,6 @@ export function IssueDetail() {
     for (const a of agents ?? []) map.set(a.id, a);
     return map;
   }, [agents]);
-  const transcriptRuns = useMemo(
-    () =>
-      resolveIssueChatTranscriptRuns({
-        linkedRuns: timelineRuns,
-        liveRuns: liveRuns ?? [],
-        activeRun,
-      }),
-    [activeRun, liveRuns, timelineRuns],
-  );
-  const {
-    transcriptByRun: issueChatTranscriptByRun,
-    hasOutputForRun: issueChatHasOutputForRun,
-    isInitialHydrating: issueChatTranscriptHydrating,
-  } = useLiveRunTranscripts({
-    runs: transcriptRuns,
-    companyId: issue?.companyId ?? selectedCompanyId,
-  });
 
   const mentionOptions = useMemo<MentionOption[]>(
     () =>
@@ -1701,6 +1732,49 @@ export function IssueDetail() {
     },
   });
 
+  const uploadReferenceFolder = useMutation({
+    mutationFn: async (archive: { name: string; file: File }) => {
+      if (!selectedCompanyId) throw new Error("No company selected");
+      return issuesApi.uploadReferenceFolder(selectedCompanyId, issueId!, archive);
+    },
+    onSuccess: () => {
+      setReferenceFileError(null);
+      invalidateIssueDetail();
+    },
+    onError: (err) => {
+      setReferenceFileError(err instanceof Error ? err.message : "Folder upload failed");
+    },
+  });
+
+  const createReferenceRepo = useMutation({
+    mutationFn: async (input: { name: string; repoUrl: string; repoRef?: string | null }) => {
+      if (!selectedCompanyId) throw new Error("No company selected");
+      return issuesApi.createReferenceRepo(selectedCompanyId, issueId!, input);
+    },
+    onSuccess: () => {
+      setReferenceFileError(null);
+      setShowRepoReferenceForm(false);
+      setRepoReferenceName("");
+      setRepoReferenceUrl("");
+      setRepoReferenceRef("");
+      invalidateIssueDetail();
+    },
+    onError: (err) => {
+      setReferenceFileError(err instanceof Error ? err.message : "Repo link failed");
+    },
+  });
+
+  const deleteReferenceFile = useMutation({
+    mutationFn: (referenceId: string) => issuesApi.deleteReferenceFile(issueId!, referenceId),
+    onSuccess: () => {
+      setReferenceFileError(null);
+      invalidateIssueDetail();
+    },
+    onError: (err) => {
+      setReferenceFileError(err instanceof Error ? err.message : "Delete failed");
+    },
+  });
+
   const importMarkdownDocument = useMutation({
     mutationFn: async (file: File) => {
       const baseName = fileBaseName(file.name);
@@ -1982,6 +2056,10 @@ export function IssueDetail() {
     [imageAttachments],
   );
 
+  const handleOpenLocalFile = useCallback((filePath: string) => {
+    setLocalFileViewerPath(filePath);
+  }, []);
+
   const copyIssueToClipboard = async () => {
     if (!issue) return;
     const decodeEntities = (text: string) => {
@@ -2087,6 +2165,12 @@ export function IssueDetail() {
   const handleInterruptQueuedRun = useCallback(async (runId: string) => {
     await interruptQueuedComment.mutateAsync(runId);
   }, [interruptQueuedComment]);
+  useEffect(() => {
+    const input = folderInputRef.current;
+    if (!input) return;
+    input.setAttribute("webkitdirectory", "");
+    input.setAttribute("directory", "");
+  }, []);
 
   if (isLoading) return <IssueDetailLoadingState headerSeed={issueHeaderSeed} />;
   if (error) return <p className="text-sm text-destructive">{error.message}</p>;
@@ -2094,6 +2178,7 @@ export function IssueDetail() {
 
   // Ancestors are returned oldest-first from the server (root at end, immediate parent at start)
   const ancestors = issue.ancestors ?? [];
+
   const handleFilePicked = async (evt: ChangeEvent<HTMLInputElement>) => {
     const files = evt.target.files;
     if (!files || files.length === 0) return;
@@ -2107,6 +2192,34 @@ export function IssueDetail() {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  };
+
+  const handleFolderPicked = async (evt: ChangeEvent<HTMLInputElement>) => {
+    const files = evt.target.files;
+    if (!files || files.length === 0) return;
+    try {
+      const archive = await buildFolderArchiveFile(files);
+      await uploadReferenceFolder.mutateAsync(archive);
+    } finally {
+      if (folderInputRef.current) {
+        folderInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleCreateRepoReference = async () => {
+    const name = repoReferenceName.trim();
+    const repoUrl = repoReferenceUrl.trim();
+    const repoRef = repoReferenceRef.trim();
+    if (!name || !repoUrl) {
+      setReferenceFileError("Repo name and URL are required");
+      return;
+    }
+    await createReferenceRepo.mutateAsync({
+      name,
+      repoUrl,
+      repoRef: repoRef || null,
+    });
   };
 
   const handleAttachmentDrop = async (evt: DragEvent<HTMLDivElement>) => {
@@ -2124,6 +2237,8 @@ export function IssueDetail() {
   };
 
   const hasAttachments = attachmentList.length > 0;
+  const isReferenceFilePending =
+    uploadReferenceFolder.isPending || createReferenceRepo.isPending || deleteReferenceFile.isPending;
   const attachmentUploadButton = (
     <>
       <input
@@ -2152,6 +2267,37 @@ export function IssueDetail() {
         )}
       </Button>
     </>
+  );
+  const referenceFileActions = (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        ref={folderInputRef}
+        type="file"
+        className="hidden"
+        multiple
+        onChange={handleFolderPicked}
+      />
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => folderInputRef.current?.click()}
+        disabled={isReferenceFilePending}
+        className="shadow-none"
+      >
+        <Paperclip className="h-3.5 w-3.5 mr-1.5" />
+        {uploadReferenceFolder.isPending ? "Uploading folder..." : "Upload folder"}
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setShowRepoReferenceForm((current) => !current)}
+        disabled={isReferenceFilePending}
+        className="shadow-none"
+      >
+        <Plus className="h-3.5 w-3.5 mr-1.5" />
+        {showRepoReferenceForm ? "Cancel repo link" : "Link repo"}
+      </Button>
+    </div>
   );
 
   return (
@@ -2431,6 +2577,7 @@ export function IssueDetail() {
           const attachment = await uploadAttachment.mutateAsync(file);
           return attachment.contentPath;
         }}
+        onOpenLocalFile={handleOpenLocalFile}
         onVote={async (revisionId, vote, options) => {
           await feedbackVoteMutation.mutateAsync({
             targetType: "issue_document_revision",
@@ -2443,6 +2590,99 @@ export function IssueDetail() {
         }}
         extraActions={!hasAttachments ? attachmentUploadButton : null}
       />
+
+      <div className="space-y-3 rounded-lg border border-border/60 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-medium text-muted-foreground">Reference Files</h3>
+          {referenceFileActions}
+        </div>
+        {referenceFileError ? (
+          <p className="text-xs text-destructive">{referenceFileError}</p>
+        ) : null}
+        {showRepoReferenceForm ? (
+          <div className="grid gap-2 rounded-md border border-border/60 bg-muted/20 p-3">
+            <input
+              type="text"
+              value={repoReferenceName}
+              onChange={(evt) => setRepoReferenceName(evt.target.value)}
+              placeholder="Reference name"
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            />
+            <input
+              type="url"
+              value={repoReferenceUrl}
+              onChange={(evt) => setRepoReferenceUrl(evt.target.value)}
+              placeholder="https://github.com/org/repo"
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            />
+            <input
+              type="text"
+              value={repoReferenceRef}
+              onChange={(evt) => setRepoReferenceRef(evt.target.value)}
+              placeholder="Branch or ref (optional)"
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            />
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                onClick={() => void handleCreateRepoReference()}
+                disabled={createReferenceRepo.isPending}
+              >
+                {createReferenceRepo.isPending ? "Linking..." : "Save repo link"}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        {referenceFiles.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No issue reference files yet. Documents and uploaded attachments will also appear here once present.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {referenceFiles.map((referenceFile: IssueReferenceFile) => {
+              const canDeleteManagedReference =
+                referenceFile.kind === "folder_archive" || referenceFile.kind === "repo_link";
+              return (
+                <div key={`${referenceFile.kind}:${referenceFile.id}`} className="rounded-md border border-border p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-sm font-medium">{referenceFile.name}</span>
+                        <span className="rounded bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                          {referenceFile.kind.replace(/_/g, " ")}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {referenceFile.documentKey ? `Document key: ${referenceFile.documentKey}` : null}
+                        {referenceFile.attachmentId ? `Attachment: ${referenceFile.attachmentId}` : null}
+                        {referenceFile.repoUrl ? `Repo: ${referenceFile.repoUrl}` : null}
+                        {referenceFile.repoRef ? ` @ ${referenceFile.repoRef}` : null}
+                        {!referenceFile.documentKey && !referenceFile.attachmentId && !referenceFile.repoUrl && referenceFile.byteSize
+                          ? `${(referenceFile.byteSize / 1024).toFixed(1)} KB`
+                          : null}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        Updated {relativeTime(referenceFile.updatedAt)}
+                      </p>
+                    </div>
+                    {canDeleteManagedReference ? (
+                      <button
+                        type="button"
+                        className="text-muted-foreground hover:text-destructive"
+                        onClick={() => deleteReferenceFile.mutate(referenceFile.id)}
+                        disabled={deleteReferenceFile.isPending}
+                        title="Delete reference file"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {attachmentsInitialLoading ? (
         <IssueSectionSkeleton titleWidth="w-24" rows={2} />
@@ -2583,6 +2823,16 @@ export function IssueDetail() {
         onOpenChange={setGalleryOpen}
       />
 
+      <LocalFileViewerDialog
+        issueId={issue.id}
+        filePath={localFileViewerPath}
+        open={Boolean(localFileViewerPath)}
+        onOpenChange={(open) => {
+          if (!open) setLocalFileViewerPath(null);
+        }}
+        onOpenLocalFile={handleOpenLocalFile}
+      />
+
       <IssueWorkspaceCard
         issue={issue}
         project={resolvedProject}
@@ -2640,6 +2890,7 @@ export function IssueDetail() {
               onCancelQueued={handleCancelQueuedComment}
               interruptingQueuedRunId={interruptQueuedComment.isPending ? interruptQueuedComment.variables ?? null : null}
               onImageClick={handleChatImageClick}
+              onOpenLocalFile={handleOpenLocalFile}
             />
           ) : null}
         </TabsContent>

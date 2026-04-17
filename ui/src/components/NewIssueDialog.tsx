@@ -13,6 +13,7 @@ import { authApi } from "../api/auth";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
 import { useProjectOrder } from "../hooks/useProjectOrder";
+import { createZipArchive } from "../lib/zip";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { buildExecutionPolicy } from "../lib/issue-execution-policy";
 import { buildAssigneeOptions, buildMentionOptions } from "../lib/people-directory";
@@ -46,6 +47,7 @@ import {
   Tag,
   Calendar,
   Paperclip,
+  FolderUp,
   FileText,
   Loader2,
   ListTree,
@@ -53,6 +55,7 @@ import {
   Eye,
   ShieldCheck,
   User,
+  Plus,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { extractProviderIdWithFallback } from "../lib/model-utils";
@@ -86,10 +89,13 @@ interface IssueDraft {
 
 type StagedIssueFile = {
   id: string;
-  file: File;
-  kind: "document" | "attachment";
+  kind: "document" | "attachment" | "folder_archive" | "repo_link";
+  file?: File;
   documentKey?: string;
   title?: string | null;
+  name?: string;
+  repoUrl?: string;
+  repoRef?: string | null;
 };
 
 const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local"]);
@@ -206,6 +212,40 @@ function titleizeFilename(input: string) {
     .join(" ");
 }
 
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function buildFolderArchiveFile(files: FileList) {
+  const selectedFiles = Array.from(files).filter((file) => (file.webkitRelativePath || file.name).length > 0);
+  if (selectedFiles.length === 0) {
+    throw new Error("No folder files were selected.");
+  }
+  const firstRelativePath = selectedFiles[0]!.webkitRelativePath || selectedFiles[0]!.name;
+  const rootName = firstRelativePath.split("/").filter(Boolean)[0] ?? (fileBaseName(selectedFiles[0]!.name) || "folder");
+  const archiveEntries: Record<string, { encoding: "base64"; data: string; contentType: string }> = {};
+  for (const file of selectedFiles) {
+    const relativePath = file.webkitRelativePath || file.name;
+    const pathParts = relativePath.split("/").filter(Boolean);
+    const archivePath = pathParts.length > 1 ? pathParts.slice(1).join("/") : pathParts[0]!;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    archiveEntries[archivePath] = {
+      encoding: "base64",
+      data: bytesToBase64(bytes),
+      contentType: file.type || "application/octet-stream",
+    };
+  }
+  const archiveBytes = createZipArchive(archiveEntries, rootName);
+  const archiveBuffer = new ArrayBuffer(archiveBytes.byteLength);
+  new Uint8Array(archiveBuffer).set(archiveBytes);
+  return {
+    name: rootName,
+    file: new File([archiveBuffer], `${rootName}.zip`, { type: "application/zip" }),
+  };
+}
+
 function createUniqueDocumentKey(baseKey: string, stagedFiles: StagedIssueFile[]) {
   const existingKeys = new Set(
     stagedFiles
@@ -305,6 +345,11 @@ export function NewIssueDialog() {
   const [dialogCompanyId, setDialogCompanyId] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<StagedIssueFile[]>([]);
   const [isFileDragOver, setIsFileDragOver] = useState(false);
+  const [referenceFileError, setReferenceFileError] = useState<string | null>(null);
+  const [showRepoReferenceForm, setShowRepoReferenceForm] = useState(false);
+  const [repoReferenceName, setRepoReferenceName] = useState("");
+  const [repoReferenceUrl, setRepoReferenceUrl] = useState("");
+  const [repoReferenceRef, setRepoReferenceRef] = useState("");
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const executionWorkspaceDefaultProjectId = useRef<string | null>(null);
 
@@ -323,6 +368,7 @@ export function NewIssueDialog() {
   const [companyOpen, setCompanyOpen] = useState(false);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
   const stageFileInputRef = useRef<HTMLInputElement | null>(null);
+  const stageFolderInputRef = useRef<HTMLInputElement | null>(null);
   const assigneeSelectorRef = useRef<HTMLButtonElement | null>(null);
   const projectSelectorRef = useRef<HTMLButtonElement | null>(null);
 
@@ -410,25 +456,53 @@ export function NewIssueDialog() {
       stagedFiles: pendingStagedFiles,
       ...data
     }: { companyId: string; stagedFiles: StagedIssueFile[] } & Record<string, unknown>) => {
-      const issue = await issuesApi.create(companyId, data);
+      const intendedStatus = typeof data.status === "string" ? data.status : "todo";
+      const hasAssignee =
+        (typeof data.assigneeAgentId === "string" && data.assigneeAgentId.length > 0) ||
+        (typeof data.assigneeUserId === "string" && data.assigneeUserId.length > 0);
+      const shouldDelayFirstWake =
+        pendingStagedFiles.length > 0 &&
+        hasAssignee &&
+        intendedStatus !== "backlog";
+
+      const createPayload = shouldDelayFirstWake
+        ? { ...data, status: "backlog" }
+        : data;
+
+      let issue = await issuesApi.create(companyId, createPayload);
       const failures: string[] = [];
 
       for (const stagedFile of pendingStagedFiles) {
         try {
           if (stagedFile.kind === "document") {
-            const body = await stagedFile.file.text();
+            const body = await stagedFile.file!.text();
             await issuesApi.upsertDocument(issue.id, stagedFile.documentKey ?? "document", {
               title: stagedFile.documentKey === "plan" ? null : stagedFile.title ?? null,
               format: "markdown",
               body,
               baseRevisionId: null,
             });
-          } else {
-            await issuesApi.uploadAttachment(companyId, issue.id, stagedFile.file);
+          } else if (stagedFile.kind === "attachment") {
+            await issuesApi.uploadAttachment(companyId, issue.id, stagedFile.file!);
+          } else if (stagedFile.kind === "folder_archive") {
+            await issuesApi.uploadReferenceFolder(companyId, issue.id, {
+              name: stagedFile.name ?? fileBaseName(stagedFile.file!.name),
+              file: stagedFile.file!,
+            });
+          } else if (stagedFile.kind === "repo_link") {
+            await issuesApi.createReferenceRepo(companyId, issue.id, {
+              name: stagedFile.name ?? stagedFile.repoUrl ?? "repo",
+              repoUrl: stagedFile.repoUrl ?? "",
+              repoRef: stagedFile.repoRef ?? null,
+            });
           }
         } catch {
-          failures.push(stagedFile.file.name);
+          failures.push(stagedFile.file?.name ?? stagedFile.name ?? stagedFile.repoUrl ?? stagedFile.id);
         }
+      }
+
+      if (shouldDelayFirstWake) {
+        issue = await issuesApi.update(issue.id, { status: intendedStatus });
       }
 
       return { issue, companyId, failures };
@@ -771,11 +845,79 @@ export function NewIssueDialog() {
     });
   }
 
+  useEffect(() => {
+    const input = stageFolderInputRef.current;
+    if (!input) return;
+    input.setAttribute("webkitdirectory", "");
+    input.setAttribute("directory", "");
+    (input as HTMLInputElement & { webkitdirectory?: boolean; directory?: boolean }).webkitdirectory = true;
+    (input as HTMLInputElement & { webkitdirectory?: boolean; directory?: boolean }).directory = true;
+  }, []);
+
+  function openStageFolderPicker() {
+    const input = stageFolderInputRef.current;
+    if (!input) return;
+    input.setAttribute("webkitdirectory", "");
+    input.setAttribute("directory", "");
+    (input as HTMLInputElement & { webkitdirectory?: boolean; directory?: boolean }).webkitdirectory = true;
+    (input as HTMLInputElement & { directory?: boolean }).directory = true;
+    input.click();
+  }
+
   function handleStageFilesPicked(evt: ChangeEvent<HTMLInputElement>) {
     stageFiles(Array.from(evt.target.files ?? []));
     if (stageFileInputRef.current) {
       stageFileInputRef.current.value = "";
     }
+  }
+
+  async function handleStageFolderPicked(evt: ChangeEvent<HTMLInputElement>) {
+    const files = evt.target.files;
+    if (!files || files.length === 0) return;
+    try {
+      const archive = await buildFolderArchiveFile(files);
+      setReferenceFileError(null);
+      setStagedFiles((current) => [
+        ...current,
+        {
+          id: `folder:${archive.name}:${archive.file.size}:${archive.file.lastModified}`,
+          file: archive.file,
+          kind: "folder_archive",
+          name: archive.name,
+        },
+      ]);
+    } catch (error) {
+      setReferenceFileError(error instanceof Error ? error.message : "Folder upload failed");
+    } finally {
+      if (stageFolderInputRef.current) {
+        stageFolderInputRef.current.value = "";
+      }
+    }
+  }
+
+  function stageRepoReference() {
+    const name = repoReferenceName.trim();
+    const repoUrl = repoReferenceUrl.trim();
+    const repoRef = repoReferenceRef.trim();
+    if (!name || !repoUrl) {
+      setReferenceFileError("Repo name and URL are required");
+      return;
+    }
+    setReferenceFileError(null);
+    setStagedFiles((current) => [
+      ...current,
+      {
+        id: `repo:${name}:${repoUrl}:${repoRef}`,
+        kind: "repo_link",
+        name,
+        repoUrl,
+        repoRef: repoRef || null,
+      },
+    ]);
+    setShowRepoReferenceForm(false);
+    setRepoReferenceName("");
+    setRepoReferenceUrl("");
+    setRepoReferenceRef("");
   }
 
   function handleFileDragEnter(evt: DragEvent<HTMLDivElement>) {
@@ -821,6 +963,13 @@ export function NewIssueDialog() {
     experimentalSettings?.enableIsolatedWorkspaces === true
       ? currentProject?.executionWorkspacePolicy ?? null
       : null;
+  const currentProjectWorkspaces = useMemo(() => {
+    if (!currentProject?.workspaces) return [];
+    return [...currentProject.workspaces].sort((a, b) => {
+      if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [currentProject]);
   const currentProjectSupportsExecutionWorkspace = Boolean(currentProjectExecutionWorkspacePolicy?.enabled);
   const deduplicatedReusableWorkspaces = useMemo(() => {
     const workspaces = reusableExecutionWorkspaces ?? [];
@@ -891,6 +1040,8 @@ export function NewIssueDialog() {
     createIssue.error instanceof Error ? createIssue.error.message : "Failed to create issue. Try again.";
   const stagedDocuments = stagedFiles.filter((file) => file.kind === "document");
   const stagedAttachments = stagedFiles.filter((file) => file.kind === "attachment");
+  const stagedFolderArchives = stagedFiles.filter((file) => file.kind === "folder_archive");
+  const stagedRepoLinks = stagedFiles.filter((file) => file.kind === "repo_link");
 
   const handleProjectChange = useCallback((nextProjectId: string) => {
     setProjectId(nextProjectId);
@@ -1199,6 +1350,24 @@ export function NewIssueDialog() {
                   );
                 }}
               />
+              {currentProjectWorkspaces.length > 0 ? (
+                <>
+                  <span>in workspace</span>
+                  <select
+                    className="min-w-[11rem] rounded-md border border-border bg-transparent px-2 py-1.5 text-xs outline-none"
+                    value={projectWorkspaceId}
+                    onChange={(event) => setProjectWorkspaceId(event.target.value)}
+                    disabled={createIssue.isPending}
+                    title="Project workspace"
+                  >
+                    {currentProjectWorkspaces.map((workspace) => (
+                      <option key={workspace.id} value={workspace.id}>
+                        {workspace.isPrimary ? "Default · " : ""}{workspace.name}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              ) : null}
 
               {/* Three-dot menu to add Reviewer / Approver rows */}
               <Popover open={participantMenuOpen} onOpenChange={setParticipantMenuOpen}>
@@ -1487,24 +1656,95 @@ export function NewIssueDialog() {
             </div>
             {stagedFiles.length > 0 ? (
               <div className="mt-4 space-y-3 rounded-lg border border-border/70 p-3">
+              {referenceFileError ? (
+                <div className="text-xs text-destructive">{referenceFileError}</div>
+              ) : null}
               {stagedDocuments.length > 0 ? (
                 <div className="space-y-2">
                   <div className="text-xs font-medium text-muted-foreground">Documents</div>
                   <div className="space-y-2">
-                    {stagedDocuments.map((file) => (
+                    {stagedDocuments.map((file) => {
+                      if (!file.file) return null;
+                      return (
+                        <div key={file.id} className="flex items-start justify-between gap-3 rounded-md border border-border/70 px-3 py-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                                {file.documentKey}
+                              </span>
+                              <span className="truncate text-sm">{file.file.name}</span>
+                            </div>
+                            <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                              <FileText className="h-3.5 w-3.5" />
+                              <span>{file.title || file.file.name}</span>
+                              <span>•</span>
+                              <span>{formatFileSize(file.file)}</span>
+                            </div>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            className="shrink-0 text-muted-foreground"
+                            onClick={() => removeStagedFile(file.id)}
+                            disabled={createIssue.isPending}
+                            title="Remove document"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
+              {stagedAttachments.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-muted-foreground">Attachments</div>
+                  <div className="space-y-2">
+                    {stagedAttachments.map((file) => {
+                      if (!file.file) return null;
+                      return (
+                        <div key={file.id} className="flex items-start justify-between gap-3 rounded-md border border-border/70 px-3 py-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              <span className="truncate text-sm">{file.file.name}</span>
+                            </div>
+                            <div className="mt-1 text-[11px] text-muted-foreground">
+                              {file.file.type || "application/octet-stream"} • {formatFileSize(file.file)}
+                            </div>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            className="shrink-0 text-muted-foreground"
+                            onClick={() => removeStagedFile(file.id)}
+                            disabled={createIssue.isPending}
+                            title="Remove attachment"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
+              {stagedFolderArchives.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-muted-foreground">Folders</div>
+                  <div className="space-y-2">
+                    {stagedFolderArchives.map((file) => (
                       <div key={file.id} className="flex items-start justify-between gap-3 rounded-md border border-border/70 px-3 py-2">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                              {file.documentKey}
-                            </span>
-                            <span className="truncate text-sm">{file.file.name}</span>
+                            <FolderUp className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <span className="truncate text-sm">{file.name}</span>
                           </div>
-                          <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                            <FileText className="h-3.5 w-3.5" />
-                            <span>{file.title || file.file.name}</span>
-                            <span>•</span>
-                            <span>{formatFileSize(file.file)}</span>
+                          <div className="mt-1 text-[11px] text-muted-foreground">
+                            Folder archive • {file.file ? formatFileSize(file.file) : ""}
                           </div>
                         </div>
                         <Button
@@ -1513,7 +1753,7 @@ export function NewIssueDialog() {
                           className="shrink-0 text-muted-foreground"
                           onClick={() => removeStagedFile(file.id)}
                           disabled={createIssue.isPending}
-                          title="Remove document"
+                          title="Remove folder"
                         >
                           <X className="h-3.5 w-3.5" />
                         </Button>
@@ -1523,19 +1763,20 @@ export function NewIssueDialog() {
                 </div>
               ) : null}
 
-              {stagedAttachments.length > 0 ? (
+              {stagedRepoLinks.length > 0 ? (
                 <div className="space-y-2">
-                  <div className="text-xs font-medium text-muted-foreground">Attachments</div>
+                  <div className="text-xs font-medium text-muted-foreground">Repo links</div>
                   <div className="space-y-2">
-                    {stagedAttachments.map((file) => (
+                    {stagedRepoLinks.map((file) => (
                       <div key={file.id} className="flex items-start justify-between gap-3 rounded-md border border-border/70 px-3 py-2">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                            <span className="truncate text-sm">{file.file.name}</span>
+                            <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <span className="truncate text-sm">{file.name}</span>
                           </div>
-                          <div className="mt-1 text-[11px] text-muted-foreground">
-                            {file.file.type || "application/octet-stream"} • {formatFileSize(file.file)}
+                          <div className="mt-1 text-[11px] text-muted-foreground break-all">
+                            {file.repoUrl}
+                            {file.repoRef ? ` @ ${file.repoRef}` : ""}
                           </div>
                         </div>
                         <Button
@@ -1544,7 +1785,7 @@ export function NewIssueDialog() {
                           className="shrink-0 text-muted-foreground"
                           onClick={() => removeStagedFile(file.id)}
                           disabled={createIssue.isPending}
-                          title="Remove attachment"
+                          title="Remove repo link"
                         >
                           <X className="h-3.5 w-3.5" />
                         </Button>
@@ -1633,6 +1874,13 @@ export function NewIssueDialog() {
             onChange={handleStageFilesPicked}
             multiple
           />
+          <input
+            ref={stageFolderInputRef}
+            type="file"
+            className="hidden"
+            onChange={handleStageFolderPicked}
+            multiple
+          />
           <button
             className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors text-muted-foreground"
             onClick={() => stageFileInputRef.current?.click()}
@@ -1640,6 +1888,22 @@ export function NewIssueDialog() {
           >
             <Paperclip className="h-3 w-3" />
             Upload
+          </button>
+          <button
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors text-muted-foreground"
+            onClick={openStageFolderPicker}
+            disabled={createIssue.isPending}
+          >
+            <FolderUp className="h-3 w-3" />
+            Folder
+          </button>
+          <button
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent/50 transition-colors text-muted-foreground"
+            onClick={() => setShowRepoReferenceForm((open) => !open)}
+            disabled={createIssue.isPending}
+          >
+            <Plus className="h-3 w-3" />
+            {showRepoReferenceForm ? "Cancel Repo" : "Repo"}
           </button>
 
           {/* More (dates) */}
@@ -1661,6 +1925,40 @@ export function NewIssueDialog() {
             </PopoverContent>
           </Popover>
         </div>
+
+        {showRepoReferenceForm ? (
+          <div className="border-t border-border px-4 py-3">
+            <div className="space-y-2 rounded-md border border-border/70 bg-muted/20 p-3">
+              <div className="text-xs font-medium text-muted-foreground">Stage repo link</div>
+              <input
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none"
+                value={repoReferenceName}
+                onChange={(e) => setRepoReferenceName(e.target.value)}
+                placeholder="Reference name"
+                disabled={createIssue.isPending}
+              />
+              <input
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none"
+                value={repoReferenceUrl}
+                onChange={(e) => setRepoReferenceUrl(e.target.value)}
+                placeholder="https://github.com/org/repo"
+                disabled={createIssue.isPending}
+              />
+              <input
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none"
+                value={repoReferenceRef}
+                onChange={(e) => setRepoReferenceRef(e.target.value)}
+                placeholder="Branch or ref (optional)"
+                disabled={createIssue.isPending}
+              />
+              <div className="flex justify-end">
+                <Button size="sm" onClick={stageRepoReference} disabled={createIssue.isPending}>
+                  Stage Repo Link
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {/* Footer */}
         <div className="flex items-center justify-between px-4 py-2.5 border-t border-border shrink-0">

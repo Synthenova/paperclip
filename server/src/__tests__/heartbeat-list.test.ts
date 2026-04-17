@@ -189,4 +189,60 @@ describeEmbeddedPostgres("heartbeat list", () => {
     expect((result?.stdout as string).length).toBeLessThan(oversizedStdout.length);
     expect(result).not.toHaveProperty("nestedHuge");
   });
+
+  it("returns chat context and summarized results for task-key scoped runs", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const taskKey = `chat:${randomUUID()}`;
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "CodexCoder",
+      role: "engineer",
+      status: "running",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "succeeded",
+      contextSnapshot: {
+        taskKey,
+        chatThreadId: taskKey.slice("chat:".length),
+        chatUserMessage: "hello from the board",
+      },
+      resultJson: {
+        summary: "assistant reply",
+        message: "assistant reply",
+        nested: { ignored: true },
+      },
+    });
+
+    const runs = await heartbeatService(db).listRunsForTaskKey(companyId, agentId, taskKey);
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.contextSnapshot).toMatchObject({
+      taskKey,
+      chatUserMessage: "hello from the board",
+    });
+    expect(runs[0]?.resultJson).toEqual({
+      summary: "assistant reply",
+      message: "assistant reply",
+    });
+  });
 });
