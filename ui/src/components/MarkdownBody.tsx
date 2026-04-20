@@ -233,7 +233,7 @@ export function MarkdownBody({
           : parsed.kind === "skill"
             ? `/skills/${parsed.skillId}`
             : parsed.kind === "user"
-              ? (parsed.email ? `mailto:${parsed.email}` : "#")
+              ? (parsed.email ? `mailto:${parsed.email}` : "/company/settings/access")
               : `/agents/${parsed.agentId}`;
         return (
           <a

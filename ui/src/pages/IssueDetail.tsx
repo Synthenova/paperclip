@@ -2,14 +2,15 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type Ref } fro
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
+import { ApiError } from "../api/client";
 import { issuesApi } from "../api/issues";
 import { createWorkspaceExplorerApi } from "../api/workspace-explorer";
 import { approvalsApi } from "../api/approvals";
 import { activityApi, type RunForIssue } from "../api/activity";
 import { heartbeatsApi, type ActiveRunForIssue, type LiveRunForIssue } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
-import { agentsApi } from "../api/agents";
 import { accessApi } from "../api/access";
+import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
 import { projectsApi } from "../api/projects";
 import { useCompany } from "../context/CompanyContext";
@@ -19,7 +20,7 @@ import { useSidebar } from "../context/SidebarContext";
 import { useToastActions } from "../context/ToastContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { assigneeValueFromSelection, suggestedCommentAssigneeValue } from "../lib/assignees";
-import { buildAssigneeOptions, buildMentionOptions } from "../lib/people-directory";
+import { buildCompanyUserInlineOptions, buildCompanyUserLabelMap, buildCompanyUserProfileMap, buildMarkdownMentionOptions } from "../lib/company-members";
 import { extractIssueTimelineEvents } from "../lib/issue-timeline-events";
 import { queryKeys } from "../lib/queryKeys";
 import { keepPreviousDataForSameQueryTail } from "../lib/query-placeholder-data";
@@ -60,8 +61,11 @@ import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils"
 import { ApprovalCard } from "../components/ApprovalCard";
 import { InlineEditor } from "../components/InlineEditor";
 import { IssueChatThread, type IssueChatComposerHandle } from "../components/IssueChatThread";
+import { IssueContinuationHandoff } from "../components/IssueContinuationHandoff";
+import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssuesList } from "../components/IssuesList";
 import { IssueProperties } from "../components/IssueProperties";
+import { IssueRunLedger } from "../components/IssueRunLedger";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import { LocalFileViewerDialog } from "../components/LocalFileViewerDialog";
 import type { MentionOption } from "../components/MarkdownEditor";
@@ -102,6 +106,7 @@ import {
 import {
   getClosedIsolatedExecutionWorkspaceMessage,
   isClosedIsolatedExecutionWorkspace,
+  ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY,
   type ActivityEvent,
   type Agent,
   type FeedbackVote,
@@ -220,14 +225,17 @@ function mergeOptimisticFeedbackVote(
   ];
 }
 
-function ActorIdentity({ evt, agentMap }: { evt: ActivityEvent; agentMap: Map<string, Agent> }) {
+function ActorIdentity({ evt, agentMap, userProfileMap }: { evt: ActivityEvent; agentMap: Map<string, Agent>; userProfileMap?: Map<string, import("../lib/company-members").CompanyUserProfile> }) {
   const id = evt.actorId;
   if (evt.actorType === "agent") {
     const agent = agentMap.get(id);
     return <Identity name={agent?.name ?? id.slice(0, 8)} size="sm" />;
   }
   if (evt.actorType === "system") return <Identity name="System" size="sm" />;
-  if (evt.actorType === "user") return <Identity name="Board" size="sm" />;
+  if (evt.actorType === "user") {
+    const profile = userProfileMap?.get(id);
+    return <Identity name={profile?.label ?? "Board"} avatarUrl={profile?.image} size="sm" />;
+  }
   return <Identity name={id || "Unknown"} size="sm" />;
 }
 
@@ -472,6 +480,8 @@ type IssueDetailChatTabProps = {
   feedbackTermsUrl: string | null;
   agentMap: Map<string, Agent>;
   currentUserId: string | null;
+  userLabelMap: ReadonlyMap<string, string> | null;
+  userProfileMap: ReadonlyMap<string, import("../lib/company-members").CompanyUserProfile> | null;
   draftKey: string;
   reassignOptions: Array<{ id: string; label: string; searchText?: string }>;
   currentAssigneeValue: string;
@@ -509,6 +519,8 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   feedbackTermsUrl,
   agentMap,
   currentUserId,
+  userLabelMap,
+  userProfileMap,
   draftKey,
   reassignOptions,
   currentAssigneeValue,
@@ -654,6 +666,8 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
         issueStatus={issueStatus}
         agentMap={agentMap}
         currentUserId={currentUserId}
+        userLabelMap={userLabelMap}
+        userProfileMap={userProfileMap}
         draftKey={draftKey}
         enableReassign
         reassignOptions={reassignOptions}
@@ -684,18 +698,28 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
 
 type IssueDetailActivityTabProps = {
   issueId: string;
+  issueStatus: Issue["status"];
+  childIssues: Issue[];
   agentMap: Map<string, Agent>;
+  hasLiveRuns: boolean;
   currentUserId: string | null;
+  userProfileMap: Map<string, import("../lib/company-members").CompanyUserProfile>;
   pendingApprovalAction: { approvalId: string; action: "approve" | "reject" } | null;
   onApprovalAction: (approvalId: string, action: "approve" | "reject") => void;
+  handoffFocusSignal?: number;
 };
 
 function IssueDetailActivityTab({
   issueId,
+  issueStatus,
+  childIssues,
   agentMap,
+  hasLiveRuns,
   currentUserId,
+  userProfileMap,
   pendingApprovalAction,
   onApprovalAction,
+  handoffFocusSignal = 0,
 }: IssueDetailActivityTabProps) {
   const { data: activity, isLoading: activityLoading } = useQuery({
     queryKey: queryKeys.issues.activity(issueId),
@@ -711,6 +735,21 @@ function IssueDetailActivityTab({
     queryKey: queryKeys.issues.approvals(issueId),
     queryFn: () => issuesApi.listApprovals(issueId),
     placeholderData: keepPreviousDataForSameQueryTail<Awaited<ReturnType<typeof issuesApi.listApprovals>>>(issueId),
+  });
+  const { data: continuationHandoff } = useQuery({
+    queryKey: queryKeys.issues.document(issueId, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY),
+    queryFn: async () => {
+      try {
+        return await issuesApi.getDocument(issueId, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    retry: false,
+    placeholderData: keepPreviousDataForSameQueryTail<Awaited<ReturnType<typeof issuesApi.getDocument>> | null>(
+      issueId,
+    ),
   });
   const initialLoading =
     (activityLoading && activity === undefined)
@@ -760,6 +799,16 @@ function IssueDetailActivityTab({
 
   return (
     <>
+      <div className="mb-3">
+        <IssueRunLedger
+          issueId={issueId}
+          issueStatus={issueStatus}
+          childIssues={childIssues}
+          agentMap={agentMap}
+          hasLiveRuns={hasLiveRuns}
+        />
+      </div>
+      <IssueContinuationHandoff document={continuationHandoff} focusSignal={handoffFocusSignal} />
       {linkedApprovals && linkedApprovals.length > 0 && (
         <div className="mb-3 space-y-3">
           {linkedApprovals.map((approval) => (
@@ -810,8 +859,8 @@ function IssueDetailActivityTab({
         <div className="space-y-1.5">
           {activity.slice(0, 20).map((evt) => (
             <div key={evt.id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <ActorIdentity evt={evt} agentMap={agentMap} />
-              <span>{formatIssueActivityAction(evt.action, evt.details, { agentMap, currentUserId })}</span>
+              <ActorIdentity evt={evt} agentMap={agentMap} userProfileMap={userProfileMap} />
+              <span>{formatIssueActivityAction(evt.action, evt.details, { agentMap, userProfileMap, currentUserId })}</span>
               <span className="ml-auto shrink-0">{relativeTime(evt.createdAt)}</span>
             </div>
           ))}
@@ -837,6 +886,7 @@ export function IssueDetail() {
   const [copied, setCopied] = useState(false);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
   const [detailTab, setDetailTab] = useState("chat");
+  const [handoffFocusSignal, setHandoffFocusSignal] = useState(0);
   const [pendingApprovalAction, setPendingApprovalAction] = useState<{
     approvalId: string;
     action: "approve" | "reject";
@@ -942,14 +992,14 @@ export function IssueDetail() {
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+  const { data: companyMembers } = useQuery({
+    queryKey: queryKeys.access.companyUserDirectory(selectedCompanyId!),
+    queryFn: () => accessApi.listUserDirectory(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
-  });
-  const { data: members } = useQuery({
-    queryKey: queryKeys.access.users(selectedCompanyId!),
-    queryFn: () => accessApi.listUsers(selectedCompanyId!),
-    enabled: !!selectedCompanyId && session !== null && session !== undefined,
   });
 
   const { data: projects } = useQuery({
@@ -997,16 +1047,21 @@ export function IssueDetail() {
     for (const a of agents ?? []) map.set(a.id, a);
     return map;
   }, [agents]);
-
-  const mentionOptions = useMemo<MentionOption[]>(
-    () =>
-      buildMentionOptions({
-        members,
-        agents,
-        projects: orderedProjects,
-      }),
-    [agents, members, orderedProjects],
+  const userProfileMap = useMemo(
+    () => buildCompanyUserProfileMap(companyMembers?.users),
+    [companyMembers?.users],
   );
+  const userLabelMap = useMemo(
+    () => buildCompanyUserLabelMap(companyMembers?.users),
+    [companyMembers?.users],
+  );
+  const mentionOptions = useMemo<MentionOption[]>(() => {
+    return buildMarkdownMentionOptions({
+      agents,
+      projects: orderedProjects,
+      members: companyMembers?.users,
+    });
+  }, [agents, companyMembers?.users, orderedProjects]);
 
   const resolvedProject = useMemo(
     () => (issue?.projectId ? orderedProjects.find((project) => project.id === issue.projectId) ?? issue.project ?? null : null),
@@ -1039,8 +1094,19 @@ export function IssueDetail() {
   ]);
 
   const commentReassignOptions = useMemo(() => {
-    return buildAssigneeOptions(members, agents);
-  }, [agents, members]);
+    const options: Array<{ id: string; label: string; searchText?: string }> = [];
+    options.push(...buildCompanyUserInlineOptions(companyMembers?.users, { excludeUserIds: [currentUserId] }));
+    const activeAgents = [...(agents ?? [])]
+      .filter((agent) => agent.status !== "terminated")
+      .sort((a, b) => a.name.localeCompare(b.name));
+    for (const agent of activeAgents) {
+      options.push({ id: `agent:${agent.id}`, label: agent.name });
+    }
+    if (currentUserId) {
+      options.push({ id: `user:${currentUserId}`, label: "Me" });
+    }
+    return options;
+  }, [agents, companyMembers?.users, currentUserId]);
 
   const actualAssigneeValue = useMemo(
     () => assigneeValueFromSelection(issue ?? {}),
@@ -1851,6 +1917,15 @@ export function IssueDetail() {
   }, [keyboardShortcutsEnabled, navigate, sourceBreadcrumb.href]);
 
   useEffect(() => {
+    const hash = location.hash;
+    if (!hash.startsWith("#document-")) return;
+    const documentKey = decodeURIComponent(hash.slice("#document-".length));
+    if (documentKey !== ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY) return;
+    setDetailTab("activity");
+    setHandoffFocusSignal((current) => current + 1);
+  }, [location.hash]);
+
+  useEffect(() => {
     if (pendingCommentComposerFocusKey === 0) return;
     if (detailTab !== "chat") return;
     commentComposerRef.current?.focus();
@@ -1918,6 +1993,7 @@ export function IssueDetail() {
   const showInboxToolbar = isMobile && isFromInbox;
   const archivePending = archiveFromInbox.isPending;
   const issueHidden = !!issue?.hiddenAt;
+  const canArchiveFromInbox = isFromInbox && !!issue?.id && !issueHidden;
 
   useEffect(() => {
     if (!showInboxToolbar) {
@@ -1980,7 +2056,7 @@ export function IssueDetail() {
   const ancestors = issue.ancestors ?? [];
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-3xl space-y-6">
       {/* Parent chain breadcrumb */}
       {ancestors.length > 0 && (
         <nav className="flex items-center gap-1 text-xs text-muted-foreground flex-wrap">
@@ -2105,6 +2181,20 @@ export function IssueDetail() {
           )}
 
           <div className="hidden md:flex items-center md:ml-auto shrink-0">
+            {canArchiveFromInbox && (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => {
+                  if (!archivePending && issue?.id) archiveFromInbox.mutate(issue.id);
+                }}
+                disabled={archivePending}
+                title="Archive from inbox"
+                aria-label="Archive from inbox"
+              >
+                <Archive className="h-4 w-4" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon-xs"
@@ -2307,6 +2397,8 @@ export function IssueDetail() {
               feedbackTermsUrl={FEEDBACK_TERMS_URL}
               agentMap={agentMap}
               currentUserId={currentUserId}
+              userLabelMap={userLabelMap}
+              userProfileMap={userProfileMap}
               draftKey={`paperclip:issue-comment-draft:${issue.id}`}
               reassignOptions={commentReassignOptions}
               currentAssigneeValue={actualAssigneeValue}
@@ -2330,9 +2422,14 @@ export function IssueDetail() {
           {detailTab === "activity" ? (
             <IssueDetailActivityTab
               issueId={issue.id}
+              issueStatus={issue.status}
+              childIssues={childIssues}
               agentMap={agentMap}
+              hasLiveRuns={hasLiveRuns}
               currentUserId={currentUserId}
+              userProfileMap={userProfileMap}
               pendingApprovalAction={pendingApprovalAction}
+              handoffFocusSignal={handoffFocusSignal}
               onApprovalAction={(approvalId, action) => {
                 approvalDecision.mutate({ approvalId, action });
               }}

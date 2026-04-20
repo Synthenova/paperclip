@@ -18,8 +18,6 @@ const addDir = addDirs[0] ?? null;
 const instructionsIndex = argv.indexOf("--append-system-prompt-file");
 const instructionsFilePath = instructionsIndex >= 0 ? argv[instructionsIndex + 1] : null;
 const capturePath = process.env.PAPERCLIP_TEST_CAPTURE_PATH;
-const promptFileFlagIndex = process.argv.indexOf("--append-system-prompt-file");
-const appendedSystemPromptFilePath = promptFileFlagIndex >= 0 ? process.argv[promptFileFlagIndex + 1] : null;
 const payload = {
   argv,
   addDirs,
@@ -29,8 +27,6 @@ const payload = {
   instructionsContents: instructionsFilePath ? fs.readFileSync(instructionsFilePath, "utf8") : null,
   skillEntries: addDir ? fs.readdirSync(path.join(addDir, ".claude", "skills")).sort() : [],
   claudeConfigDir: process.env.CLAUDE_CONFIG_DIR || null,
-  appendedSystemPromptFilePath,
-  appendedSystemPromptFileContents: appendedSystemPromptFilePath ? fs.readFileSync(appendedSystemPromptFilePath, "utf8") : null,
 };
 if (capturePath) {
   fs.writeFileSync(capturePath, JSON.stringify(payload), "utf8");

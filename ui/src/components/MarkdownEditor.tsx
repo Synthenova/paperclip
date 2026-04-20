@@ -32,7 +32,7 @@ import {
   type RealmPlugin,
 } from "@mdxeditor/editor";
 import { buildAgentMentionHref, buildProjectMentionHref, buildUserMentionHref } from "@paperclipai/shared";
-import { Boxes } from "lucide-react";
+import { Boxes, User } from "lucide-react";
 import { AgentIcon } from "./AgentIconPicker";
 import { applyMentionChipDecoration, clearMentionChipDecoration, parseMentionChipHref } from "../lib/mention-chips";
 import { MentionAwareLinkNode, mentionAwareLinkNodeReplacement } from "../lib/mention-aware-link-node";
@@ -408,6 +408,9 @@ function autocompleteOptionMatchesLink(option: AutocompleteOption, href: string)
   if (option.kind === "project" && option.projectId) {
     return parsed.kind === "project" && parsed.projectId === option.projectId;
   }
+  if (option.kind === "user" && option.userId) {
+    return parsed.kind === "user" && parsed.userId === option.userId;
+  }
 
   const agentId = option.agentId ?? option.id.replace(/^agent:/, "");
   return parsed.kind === "agent" && parsed.agentId === agentId;
@@ -534,6 +537,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       if (mention.kind === "agent") {
         const agentId = mention.agentId ?? mention.id.replace(/^agent:/, "");
         map.set(`agent:${agentId}`, mention);
+      }
+      if (mention.kind === "user" && mention.userId) {
+        map.set(`user:${mention.userId}`, mention);
       }
       if (mention.kind === "project" && mention.projectId) {
         map.set(`project:${mention.projectId}`, mention);
@@ -1226,9 +1232,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                               style={{ backgroundColor: option.projectColor ?? "#64748b" }}
                             />
                           ) : option.kind === "user" ? (
-                            <span className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-border/70 text-[9px] font-semibold text-muted-foreground">
-                              U
-                            </span>
+                            <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                           ) : (
                             <AgentIcon
                               icon={option.agentIcon}

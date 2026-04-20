@@ -1,5 +1,5 @@
 {
-  "id": "91f8128f-06d4-41b3-aade-2ff64331fe0c",
+  "id": "c13b1dd5-1860-4d0b-aeb2-5bb197766983",
   "prevId": "5b9211ec-73c0-4825-bdf7-08ba60b6915c",
   "version": "7",
   "dialect": "postgresql",
@@ -8387,218 +8387,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.issue_reference_files": {
-      "name": "issue_reference_files",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "company_id": {
-          "name": "company_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "issue_id": {
-          "name": "issue_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "asset_id": {
-          "name": "asset_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "repo_url": {
-          "name": "repo_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "repo_ref": {
-          "name": "repo_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "metadata": {
-          "name": "metadata",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::jsonb"
-        },
-        "created_by_agent_id": {
-          "name": "created_by_agent_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_by_user_id": {
-          "name": "created_by_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "issue_reference_files_company_issue_idx": {
-          "name": "issue_reference_files_company_issue_idx",
-          "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "issue_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "issue_reference_files_company_kind_idx": {
-          "name": "issue_reference_files_company_kind_idx",
-          "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "kind",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "issue_reference_files_issue_name_idx": {
-          "name": "issue_reference_files_issue_name_idx",
-          "columns": [
-            {
-              "expression": "issue_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "name",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "issue_reference_files_company_id_companies_id_fk": {
-          "name": "issue_reference_files_company_id_companies_id_fk",
-          "tableFrom": "issue_reference_files",
-          "tableTo": "companies",
-          "columnsFrom": [
-            "company_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "issue_reference_files_issue_id_issues_id_fk": {
-          "name": "issue_reference_files_issue_id_issues_id_fk",
-          "tableFrom": "issue_reference_files",
-          "tableTo": "issues",
-          "columnsFrom": [
-            "issue_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "issue_reference_files_asset_id_assets_id_fk": {
-          "name": "issue_reference_files_asset_id_assets_id_fk",
-          "tableFrom": "issue_reference_files",
-          "tableTo": "assets",
-          "columnsFrom": [
-            "asset_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "issue_reference_files_created_by_agent_id_agents_id_fk": {
-          "name": "issue_reference_files_created_by_agent_id_agents_id_fk",
-          "tableFrom": "issue_reference_files",
-          "tableTo": "agents",
-          "columnsFrom": [
-            "created_by_agent_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.issue_relations": {
       "name": "issue_relations",
       "schema": "",
@@ -9977,6 +9765,50 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "join_requests_pending_human_user_uq": {
+          "name": "join_requests_pending_human_user_uq",
+          "columns": [
+            {
+              "expression": "company_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "requesting_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"join_requests\".\"request_type\" = 'human' AND \"join_requests\".\"status\" = 'pending_approval' AND \"join_requests\".\"requesting_user_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "join_requests_pending_human_email_uq": {
+          "name": "join_requests_pending_human_email_uq",
+          "columns": [
+            {
+              "expression": "company_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "lower(\"request_email_snapshot\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"join_requests\".\"request_type\" = 'human' AND \"join_requests\".\"status\" = 'pending_approval' AND \"join_requests\".\"request_email_snapshot\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}

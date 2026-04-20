@@ -21,8 +21,8 @@ import { ApprovalCard } from "./ApprovalCard";
 import { AgentIcon } from "./AgentIconPicker";
 import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
+import { buildMarkdownMentionOptions } from "../lib/company-members";
 import { formatAssigneeUserLabel } from "../lib/assignees";
-import { buildMentionOptions } from "../lib/people-directory";
 import { queryKeys } from "../lib/queryKeys";
 import type { IssueTimelineAssignee, IssueTimelineEvent } from "../lib/issue-timeline-events";
 import { timeAgo } from "../lib/timeAgo";
@@ -696,9 +696,9 @@ export function CommentThread({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
   });
-  const { data: members } = useQuery({
-    queryKey: companyId ? queryKeys.access.users(companyId) : ["access", "users", "__idle__"],
-    queryFn: () => accessApi.listUsers(companyId!),
+  const { data: companyMembers } = useQuery({
+    queryKey: companyId ? queryKeys.access.companyUserDirectory(companyId) : ["access", "company-user-directory", "__idle__"],
+    queryFn: () => accessApi.listUserDirectory(companyId!),
     enabled: Boolean(companyId) && !(providedMentions?.length) && session !== null && session !== undefined,
   });
 
@@ -751,13 +751,12 @@ export function CommentThread({
 
   const mentions = useMemo<MentionOption[]>(() => {
     if (providedMentions) return providedMentions;
-    if (!agentMap && !members) return [];
-    return buildMentionOptions({
-      members,
+    if (!agentMap && !companyMembers?.users) return [];
+    return buildMarkdownMentionOptions({
+      members: companyMembers?.users,
       agents: Array.from(agentMap?.values() ?? []),
-      includeProjects: false,
     });
-  }, [agentMap, members, providedMentions]);
+  }, [agentMap, companyMembers?.users, providedMentions]);
 
   useEffect(() => {
     if (!draftKey) return;

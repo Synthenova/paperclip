@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { orderItemsBySelectedAndRecent } from "../lib/recent-selections";
 import { cn } from "../lib/utils";
 
 export interface InlineEntityOption {
@@ -22,6 +23,7 @@ interface InlineEntitySelectorProps {
   className?: string;
   renderTriggerValue?: (option: InlineEntityOption | null) => ReactNode;
   renderOption?: (option: InlineEntityOption, isSelected: boolean) => ReactNode;
+  recentOptionIds?: string[];
   /** Skip the Portal so the popover stays in the DOM tree (fixes scroll inside Dialogs). */
   disablePortal?: boolean;
   /** Open the popover when the trigger receives keyboard/programmatic focus. */
@@ -42,6 +44,7 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
       className,
       renderTriggerValue,
       renderOption,
+      recentOptionIds = [],
       disablePortal,
       openOnFocus = true,
     },
@@ -54,10 +57,10 @@ export const InlineEntitySelector = forwardRef<HTMLButtonElement, InlineEntitySe
     const shouldPreventCloseAutoFocusRef = useRef(false);
     const isPointerDownRef = useRef(false);
 
-    const allOptions = useMemo<InlineEntityOption[]>(
-      () => [{ id: "", label: noneLabel, searchText: noneLabel }, ...options],
-      [noneLabel, options],
-    );
+    const allOptions = useMemo<InlineEntityOption[]>(() => {
+      const baseOptions = [{ id: "", label: noneLabel, searchText: noneLabel }, ...options];
+      return orderItemsBySelectedAndRecent(baseOptions, value, recentOptionIds);
+    }, [noneLabel, options, recentOptionIds, value]);
 
     const filteredOptions = useMemo(() => {
       const term = query.trim().toLowerCase();

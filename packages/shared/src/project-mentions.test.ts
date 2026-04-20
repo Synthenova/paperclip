@@ -6,12 +6,12 @@ import {
   buildUserMentionHref,
   extractAgentMentionIds,
   extractProjectMentionIds,
-  extractUserMentionIds,
   extractSkillMentionIds,
+  extractUserMentionIds,
   parseAgentMentionHref,
   parseProjectMentionHref,
-  parseUserMentionHref,
   parseSkillMentionHref,
+  parseUserMentionHref,
 } from "./project-mentions.js";
 
 describe("project-mentions", () => {

@@ -2,12 +2,13 @@ import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
+import { accessApi } from "../api/access";
 import { projectsApi } from "../api/projects";
 import { agentsApi } from "../api/agents";
-import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
 import { goalsApi } from "../api/goals";
 import { assetsApi } from "../api/assets";
+import { buildMarkdownMentionOptions } from "../lib/company-members";
 import { queryKeys } from "../lib/queryKeys";
 import {
   Dialog,
@@ -38,7 +39,6 @@ import { cn } from "../lib/utils";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
 import { StatusBadge } from "./StatusBadge";
 import { ChoosePathButton } from "./PathInstructionsModal";
-import { buildMentionOptions } from "../lib/people-directory";
 
 const projectStatuses = [
   { value: "backlog", label: "Backlog" },
@@ -81,19 +81,18 @@ export function NewProjectDialog() {
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
   });
-  const { data: members } = useQuery({
-    queryKey: queryKeys.access.users(selectedCompanyId!),
-    queryFn: () => accessApi.listUsers(selectedCompanyId!),
-    enabled: !!selectedCompanyId && newProjectOpen && session !== null && session !== undefined,
+  const { data: companyMembers } = useQuery({
+    queryKey: queryKeys.access.companyUserDirectory(selectedCompanyId!),
+    queryFn: () => accessApi.listUserDirectory(selectedCompanyId!),
+    enabled: !!selectedCompanyId && newProjectOpen,
   });
 
   const mentionOptions = useMemo<MentionOption[]>(() => {
-    return buildMentionOptions({
-      members,
+    return buildMarkdownMentionOptions({
       agents,
-      includeProjects: false,
+      members: companyMembers?.users,
     });
-  }, [agents, members]);
+  }, [agents, companyMembers?.users]);
 
   const createProject = useMutation({
     mutationFn: (data: Record<string, unknown>) =>
