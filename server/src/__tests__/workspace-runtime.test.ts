@@ -304,6 +304,78 @@ describe("ensureServerWorkspaceLinksCurrent", () => {
 });
 
 describe("realizeExecutionWorkspace", () => {
+  it("preserves the selected repo subfolder as cwd for isolated worktrees", async () => {
+    const repoRoot = await createTempRepo();
+    const nestedWorkspace = path.join(repoRoot, "apps", "web");
+    await fs.mkdir(nestedWorkspace, { recursive: true });
+    await fs.writeFile(path.join(nestedWorkspace, "feature.ts"), "export const ok = true;\n", "utf8");
+    await runGit(repoRoot, ["add", "apps/web/feature.ts"]);
+    await runGit(repoRoot, ["commit", "-m", "Add nested workspace content"]);
+
+    const first = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: nestedWorkspace,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-1201",
+        title: "Preserve nested workspace cwd",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+
+    expect(first.strategy).toBe("git_worktree");
+    expect(first.worktreePath).toContain(path.join(".paperclip", "worktrees"));
+    expect(first.cwd).toBe(path.join(first.worktreePath!, "apps", "web"));
+    await expect(fs.readFile(path.join(first.cwd, "feature.ts"), "utf8")).resolves.toBe("export const ok = true;\n");
+
+    const second = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: nestedWorkspace,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-1201",
+        title: "Preserve nested workspace cwd",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+
+    expect(second.created).toBe(false);
+    expect(second.worktreePath).toBe(first.worktreePath);
+    expect(second.cwd).toBe(first.cwd);
+  });
+
   it("creates and reuses a git worktree for an issue-scoped branch", async () => {
     const repoRoot = await createTempRepo();
 

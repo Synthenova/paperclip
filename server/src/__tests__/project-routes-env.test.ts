@@ -1,4 +1,7 @@
 import express from "express";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -20,9 +23,14 @@ const mockSecretService = vi.hoisted(() => ({
 const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
+const mockEnsureManagedProjectWorkspace = vi.hoisted(() => vi.fn());
 
 vi.mock("../telemetry.js", () => ({
   getTelemetryClient: mockGetTelemetryClient,
+}));
+
+vi.mock("../services/managed-project-workspaces.js", () => ({
+  ensureManagedProjectWorkspace: mockEnsureManagedProjectWorkspace,
 }));
 
 vi.mock("../services/index.js", () => ({
@@ -40,6 +48,10 @@ vi.mock("../services/workspace-runtime.js", () => ({
 function registerModuleMocks() {
   vi.doMock("../telemetry.js", () => ({
     getTelemetryClient: mockGetTelemetryClient,
+  }));
+
+  vi.doMock("../services/managed-project-workspaces.js", () => ({
+    ensureManagedProjectWorkspace: mockEnsureManagedProjectWorkspace,
   }));
 
   vi.doMock("../services/index.js", () => ({
@@ -128,6 +140,7 @@ describe("project env routes", () => {
     mockProjectService.createWorkspace.mockResolvedValue(null);
     mockProjectService.listWorkspaces.mockResolvedValue([]);
     mockSecretService.normalizeEnvBindingsForPersistence.mockImplementation(async (_companyId, env) => env);
+    mockEnsureManagedProjectWorkspace.mockReset();
   });
 
   it("normalizes env bindings on create and logs only env keys", async () => {
@@ -193,6 +206,59 @@ describe("project env routes", () => {
           envKeys: ["PLAIN_KEY"],
         },
       }),
+    );
+  });
+
+  it("lists a repo-backed managed workspace when cwd is null", async () => {
+    const managedDir = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-workspace-"));
+    await fs.writeFile(path.join(managedDir, "README.md"), "# hello\n", "utf8");
+    mockEnsureManagedProjectWorkspace.mockResolvedValue({ cwd: managedDir, warning: null });
+    mockProjectService.getById.mockResolvedValue(
+      buildProject({
+        workspaces: [
+          {
+            id: "workspace-1",
+            companyId: "company-1",
+            projectId: "project-1",
+            name: "Managed repo",
+            sourceType: "git_repo",
+            cwd: null,
+            repoUrl: "https://github.com/example/repo.git",
+            repoRef: "main",
+            defaultRef: "main",
+            visibility: "private",
+            setupCommand: null,
+            cleanupCommand: null,
+            remoteProvider: null,
+            remoteWorkspaceRef: null,
+            sharedWorkspaceKey: null,
+            metadata: null,
+            runtimeConfig: null,
+            isPrimary: true,
+            runtimeServices: [],
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ],
+      }),
+    );
+
+    const app = await createApp();
+    const res = await request(app).get("/api/projects/project-1/workspaces/workspace-1/workspace/tree?path=");
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockEnsureManagedProjectWorkspace).toHaveBeenCalledWith({
+      companyId: "company-1",
+      projectId: "project-1",
+      repoUrl: "https://github.com/example/repo.git",
+    });
+    expect(res.body.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "README.md",
+          kind: "file",
+        }),
+      ]),
     );
   });
 });

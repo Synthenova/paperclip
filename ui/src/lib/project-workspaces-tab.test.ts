@@ -196,12 +196,14 @@ describe("buildProjectWorkspaceSummaries", () => {
       ],
     });
 
-    expect(summaries).toHaveLength(2);
+    expect(summaries).toHaveLength(3);
     expect(summaries[0]?.key).toBe("execution:exec-2");
-    expect(summaries[1]?.key).toBe("project:workspace-default");
+    expect(summaries[1]?.key).toBe("project:workspace-feature");
+    expect(summaries[1]?.issues).toEqual([]);
+    expect(summaries[2]?.key).toBe("project:workspace-default");
   });
 
-  it("excludes issues that only use the default shared workspace", () => {
+  it("excludes issues that only use the default shared workspace while still listing all project workspaces", () => {
     const summaries = buildProjectWorkspaceSummaries({
       project,
       issues: [
@@ -225,7 +227,10 @@ describe("buildProjectWorkspaceSummaries", () => {
       ],
     });
 
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0]?.key).toBe("project:workspace-default");
+    expect(summaries).toHaveLength(2);
+    expect(summaries[0]?.key).toBe("project:workspace-feature");
+    expect(summaries[0]?.issues).toEqual([]);
+    expect(summaries[1]?.key).toBe("project:workspace-default");
+    expect(summaries[1]?.issues).toEqual([]);
   });
 });

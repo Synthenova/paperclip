@@ -74,6 +74,7 @@ function registerServiceMocks() {
       listCompanyIds: vi.fn(async () => ["company-1"]),
     }),
     issueApprovalService: () => ({}),
+    issueReferenceFileService: () => ({ listForIssue: vi.fn(async () => []) }),
     issueService: () => mockIssueService,
     logActivity: mockLogActivity,
     projectService: () => mockProjectService,

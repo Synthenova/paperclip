@@ -72,7 +72,8 @@ import {
   parseIssueExecutionState,
 } from "../services/issue-execution-policy.js";
 import { agentsHaveFullManagementPermissions } from "../services/full-agent-access.js";
-import { resolvePaperclipInstanceRoot } from "../home-paths.js";
+import { resolveIssueWorkspaceDir, resolvePaperclipInstanceRoot } from "../home-paths.js";
+import { registerWorkspaceExplorerRoutes } from "./workspace-explorer.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
 const updateIssueRouteSchema = updateIssueSchema.extend({
@@ -419,6 +420,43 @@ export function issueRoutes(
       });
     });
   }
+
+  registerWorkspaceExplorerRoutes({
+    router,
+    basePath: "/issues/:id/workspace",
+    resolveContext: async (req) => {
+      const id = req.params.id as string;
+      const issue = await svc.getById(id);
+      if (!issue) throw notFound("Issue not found");
+      assertCompanyAccess(req, issue.companyId);
+      return {
+        companyId: issue.companyId,
+        entityType: "issue",
+        entityId: issue.id,
+        root: {
+          rootDir: resolveIssueWorkspaceDir(issue.id),
+          rootName: issue.identifier ?? issue.title ?? "files",
+          ensureExists: true,
+        },
+      };
+    },
+    buildContentPath: (req, relativePath) =>
+      `/api/issues/${encodeURIComponent(req.params.id as string)}/workspace/content?path=${encodeURIComponent(relativePath)}`,
+    logMutation: async (req, context, action, details) => {
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        companyId: context.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: `issue.workspace_${action}`,
+        entityType: "issue",
+        entityId: context.entityId,
+        details,
+      });
+    },
+  });
 
   async function assertCanManageIssueApprovalLinks(req: Request, res: Response, companyId: string) {
     assertCompanyAccess(req, companyId);

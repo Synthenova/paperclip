@@ -56,6 +56,13 @@ const mockInstanceSettingsService = vi.hoisted(() => ({
 const mockRoutineService = vi.hoisted(() => ({
   syncRunStatusForIssue: vi.fn(async () => undefined),
 }));
+const mockIssueReferenceFileService = vi.hoisted(() => ({
+  listForIssue: vi.fn(async () => []),
+  createFolderArchive: vi.fn(),
+  createRepoLink: vi.fn(),
+  getManagedById: vi.fn(),
+  removeManaged: vi.fn(),
+}));
 
 vi.mock("@paperclipai/shared/telemetry", () => ({
   trackAgentTaskCompleted: vi.fn(),
@@ -76,6 +83,7 @@ vi.mock("../services/index.js", () => ({
   heartbeatService: () => mockHeartbeatService,
   instanceSettingsService: () => mockInstanceSettingsService,
   issueApprovalService: () => ({}),
+  issueReferenceFileService: () => mockIssueReferenceFileService,
   issueService: () => mockIssueService,
   logActivity: mockLogActivity,
   projectService: () => ({}),
@@ -103,6 +111,7 @@ function registerModuleMocks() {
     heartbeatService: () => mockHeartbeatService,
     instanceSettingsService: () => mockInstanceSettingsService,
     issueApprovalService: () => ({}),
+    issueReferenceFileService: () => mockIssueReferenceFileService,
     issueService: () => mockIssueService,
     logActivity: mockLogActivity,
     projectService: () => ({}),
@@ -191,6 +200,11 @@ describe("issue comment reopen routes", () => {
     mockInstanceSettingsService.get.mockReset();
     mockInstanceSettingsService.listCompanyIds.mockReset();
     mockRoutineService.syncRunStatusForIssue.mockReset();
+    mockIssueReferenceFileService.listForIssue.mockReset();
+    mockIssueReferenceFileService.createFolderArchive.mockReset();
+    mockIssueReferenceFileService.createRepoLink.mockReset();
+    mockIssueReferenceFileService.getManagedById.mockReset();
+    mockIssueReferenceFileService.removeManaged.mockReset();
     mockTxInsertValues.mockReset();
     mockTxInsert.mockReset();
     mockDb.transaction.mockReset();
@@ -218,6 +232,7 @@ describe("issue comment reopen routes", () => {
     });
     mockInstanceSettingsService.listCompanyIds.mockResolvedValue(["company-1"]);
     mockRoutineService.syncRunStatusForIssue.mockResolvedValue(undefined);
+    mockIssueReferenceFileService.listForIssue.mockResolvedValue([]);
     mockIssueService.addComment.mockResolvedValue({
       id: "comment-1",
       issueId: "11111111-1111-4111-8111-111111111111",

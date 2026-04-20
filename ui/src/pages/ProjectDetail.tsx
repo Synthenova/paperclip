@@ -261,6 +261,16 @@ function ProjectWorkspacesContent({
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.listByProject(companyId, projectId) });
     },
   });
+  const deleteWorkspace = useMutation({
+    mutationFn: (workspaceId: string) => projectsApi.removeWorkspace(projectId, workspaceId, companyId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectRef) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects.list(companyId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.executionWorkspaces.list(companyId, { projectId }) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listByProject(companyId, projectId) });
+    },
+  });
   const createWorkspace = useMutation({
     mutationFn: (data: Record<string, unknown>) => projectsApi.createWorkspace(projectId, data, companyId),
     onSuccess: () => {
@@ -423,8 +433,18 @@ function ProjectWorkspacesContent({
                 summary={summary}
                 runtimeActionKey={runtimeActionKey}
                 runtimeActionPending={controlWorkspaceRuntime.isPending}
+                deletePending={deleteWorkspace.isPending}
                 onRuntimeAction={(input) => controlWorkspaceRuntime.mutate(input)}
                 onCloseWorkspace={(input) => setClosingWorkspace(input)}
+                onDeleteWorkspace={({ id, name, isPrimary }) => {
+                  const confirmed = window.confirm(
+                    isPrimary
+                      ? `Delete primary workspace "${name}"? If another workspace exists, Paperclip will promote the next one to primary.`
+                      : `Delete workspace "${name}"?`,
+                  );
+                  if (!confirmed) return;
+                  deleteWorkspace.mutate(id);
+                }}
               />
             ))}
           </div>
@@ -446,8 +466,18 @@ function ProjectWorkspacesContent({
                   summary={summary}
                   runtimeActionKey={runtimeActionKey}
                   runtimeActionPending={controlWorkspaceRuntime.isPending}
+                  deletePending={deleteWorkspace.isPending}
                   onRuntimeAction={(input) => controlWorkspaceRuntime.mutate(input)}
                   onCloseWorkspace={(input) => setClosingWorkspace(input)}
+                  onDeleteWorkspace={({ id, name, isPrimary }) => {
+                    const confirmed = window.confirm(
+                      isPrimary
+                        ? `Delete primary workspace "${name}"? If another workspace exists, Paperclip will promote the next one to primary.`
+                        : `Delete workspace "${name}"?`,
+                    );
+                    if (!confirmed) return;
+                    deleteWorkspace.mutate(id);
+                  }}
                 />
               ))}
             </div>

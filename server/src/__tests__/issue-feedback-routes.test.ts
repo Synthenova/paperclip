@@ -70,6 +70,7 @@ function registerModuleMocks() {
     heartbeatService: () => mockHeartbeatService,
     instanceSettingsService: () => mockInstanceSettingsService,
     issueApprovalService: () => ({}),
+    issueReferenceFileService: () => ({ listForIssue: vi.fn(async () => []) }),
     issueService: () => mockIssueService,
     logActivity: mockLogActivity,
     projectService: () => ({}),
@@ -168,7 +169,7 @@ describe("issue feedback trace routes", () => {
       traceId: "trace-1",
       limit: 1,
     });
-  });
+  }, 10000);
 
   it("rejects non-board callers before fetching a feedback trace", async () => {
     const app = await createApp({

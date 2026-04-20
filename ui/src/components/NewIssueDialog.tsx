@@ -5,6 +5,7 @@ import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
 import { issuesApi } from "../api/issues";
+import { createWorkspaceExplorerApi } from "../api/workspace-explorer";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { projectsApi } from "../api/projects";
 import { agentsApi } from "../api/agents";
@@ -13,7 +14,7 @@ import { authApi } from "../api/auth";
 import { assetsApi } from "../api/assets";
 import { queryKeys } from "../lib/queryKeys";
 import { useProjectOrder } from "../hooks/useProjectOrder";
-import { createZipArchive } from "../lib/zip";
+import { buildFolderArchiveFile } from "../lib/folder-upload";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { buildExecutionPolicy } from "../lib/issue-execution-policy";
 import { buildAssigneeOptions, buildMentionOptions } from "../lib/people-directory";
@@ -212,40 +213,6 @@ function titleizeFilename(input: string) {
     .join(" ");
 }
 
-function bytesToBase64(bytes: Uint8Array) {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
-async function buildFolderArchiveFile(files: FileList) {
-  const selectedFiles = Array.from(files).filter((file) => (file.webkitRelativePath || file.name).length > 0);
-  if (selectedFiles.length === 0) {
-    throw new Error("No folder files were selected.");
-  }
-  const firstRelativePath = selectedFiles[0]!.webkitRelativePath || selectedFiles[0]!.name;
-  const rootName = firstRelativePath.split("/").filter(Boolean)[0] ?? (fileBaseName(selectedFiles[0]!.name) || "folder");
-  const archiveEntries: Record<string, { encoding: "base64"; data: string; contentType: string }> = {};
-  for (const file of selectedFiles) {
-    const relativePath = file.webkitRelativePath || file.name;
-    const pathParts = relativePath.split("/").filter(Boolean);
-    const archivePath = pathParts.length > 1 ? pathParts.slice(1).join("/") : pathParts[0]!;
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    archiveEntries[archivePath] = {
-      encoding: "base64",
-      data: bytesToBase64(bytes),
-      contentType: file.type || "application/octet-stream",
-    };
-  }
-  const archiveBytes = createZipArchive(archiveEntries, rootName);
-  const archiveBuffer = new ArrayBuffer(archiveBytes.byteLength);
-  new Uint8Array(archiveBuffer).set(archiveBytes);
-  return {
-    name: rootName,
-    file: new File([archiveBuffer], `${rootName}.zip`, { type: "application/zip" }),
-  };
-}
-
 function createUniqueDocumentKey(baseKey: string, stagedFiles: StagedIssueFile[]) {
   const existingKeys = new Set(
     stagedFiles
@@ -267,6 +234,19 @@ function formatFileSize(file: File) {
   return `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function formatWorkspacePathTail(cwd: string | null | undefined) {
+  if (!cwd) return "repo-only";
+  const parts = cwd.split("/").filter(Boolean);
+  if (parts.length === 0) return cwd;
+  if (parts.length === 1) return parts[0]!;
+  return parts.slice(-2).join("/");
+}
+
+function formatProjectWorkspaceOptionLabel(workspace: { name: string; cwd: string | null; isPrimary: boolean }) {
+  const prefix = workspace.isPrimary ? "Default · " : "";
+  return `${prefix}${workspace.name} · ${formatWorkspacePathTail(workspace.cwd)}`;
+}
+
 const statuses = [
   { value: "backlog", label: "Backlog", color: issueStatusText.backlog ?? issueStatusTextDefault },
   { value: "todo", label: "Todo", color: issueStatusText.todo ?? issueStatusTextDefault },
@@ -283,9 +263,9 @@ const priorities = [
 ];
 
 const EXECUTION_WORKSPACE_MODES = [
-  { value: "shared_workspace", label: "Project default" },
+  { value: "shared_workspace", label: "Project default execution" },
   { value: "isolated_workspace", label: "New isolated workspace" },
-  { value: "reuse_existing", label: "Reuse existing workspace" },
+  { value: "reuse_existing", label: "Reuse existing execution workspace" },
 ] as const;
 
 function defaultProjectWorkspaceIdForProject(project: { workspaces?: Array<{ id: string; isPrimary: boolean }>; executionWorkspacePolicy?: { defaultProjectWorkspaceId?: string | null } | null } | null | undefined) {
@@ -392,6 +372,11 @@ export function NewIssueDialog() {
     queryFn: () => projectsApi.list(effectiveCompanyId!),
     enabled: !!effectiveCompanyId && newIssueOpen,
   });
+  const { data: selectedProjectDetail } = useQuery({
+    queryKey: projectId ? [...queryKeys.projects.detail(projectId), effectiveCompanyId ?? null] : ["projects", "__selected__", "none"],
+    queryFn: () => projectsApi.get(projectId, effectiveCompanyId ?? undefined),
+    enabled: Boolean(effectiveCompanyId && newIssueOpen && projectId),
+  });
   const { data: reusableExecutionWorkspaces } = useQuery({
     queryKey: queryKeys.executionWorkspaces.list(effectiveCompanyId!, {
       projectId,
@@ -470,27 +455,27 @@ export function NewIssueDialog() {
         : data;
 
       let issue = await issuesApi.create(companyId, createPayload);
+      const issueWorkspaceApi = createWorkspaceExplorerApi({ type: "issue", issueId: issue.id });
       const failures: string[] = [];
 
       for (const stagedFile of pendingStagedFiles) {
         try {
           if (stagedFile.kind === "document") {
             const body = await stagedFile.file!.text();
-            await issuesApi.upsertDocument(issue.id, stagedFile.documentKey ?? "document", {
-              title: stagedFile.documentKey === "plan" ? null : stagedFile.title ?? null,
-              format: "markdown",
-              body,
-              baseRevisionId: null,
+            const filename = `${stagedFile.documentKey ?? slugifyDocumentKey(fileBaseName(stagedFile.file!.name))}.md`;
+            await issueWorkspaceApi.createFile({
+              name: filename,
+              content: body,
             });
           } else if (stagedFile.kind === "attachment") {
-            await issuesApi.uploadAttachment(companyId, issue.id, stagedFile.file!);
+            await issueWorkspaceApi.uploadFile({ file: stagedFile.file! });
           } else if (stagedFile.kind === "folder_archive") {
-            await issuesApi.uploadReferenceFolder(companyId, issue.id, {
+            await issueWorkspaceApi.uploadFolder({
               name: stagedFile.name ?? fileBaseName(stagedFile.file!.name),
               file: stagedFile.file!,
             });
           } else if (stagedFile.kind === "repo_link") {
-            await issuesApi.createReferenceRepo(companyId, issue.id, {
+            await issueWorkspaceApi.addRepo({
               name: stagedFile.name ?? stagedFile.repoUrl ?? "repo",
               repoUrl: stagedFile.repoUrl ?? "",
               repoRef: stagedFile.repoRef ?? null,
@@ -958,7 +943,7 @@ export function NewIssueDialog() {
   const currentAssigneeUser = selectedAssigneeUserId
     ? (members ?? []).find((member) => member.id === selectedAssigneeUserId) ?? null
     : null;
-  const currentProject = orderedProjects.find((project) => project.id === projectId);
+  const currentProject = selectedProjectDetail ?? orderedProjects.find((project) => project.id === projectId);
   const currentProjectExecutionWorkspacePolicy =
     experimentalSettings?.enableIsolatedWorkspaces === true
       ? currentProject?.executionWorkspacePolicy ?? null
@@ -1352,7 +1337,7 @@ export function NewIssueDialog() {
               />
               {currentProjectWorkspaces.length > 0 ? (
                 <>
-                  <span>in workspace</span>
+                  <span>in project workspace</span>
                   <select
                     className="min-w-[11rem] rounded-md border border-border bg-transparent px-2 py-1.5 text-xs outline-none"
                     value={projectWorkspaceId}
@@ -1362,7 +1347,7 @@ export function NewIssueDialog() {
                   >
                     {currentProjectWorkspaces.map((workspace) => (
                       <option key={workspace.id} value={workspace.id}>
-                        {workspace.isPrimary ? "Default · " : ""}{workspace.name}
+                        {formatProjectWorkspaceOptionLabel(workspace)}
                       </option>
                     ))}
                   </select>
@@ -1523,9 +1508,10 @@ export function NewIssueDialog() {
           {currentProject && currentProjectSupportsExecutionWorkspace && (
             <div className="px-4 py-3 space-y-2">
             <div className="space-y-1.5">
-              <div className="text-xs font-medium">Execution workspace</div>
+              <div className="text-xs font-medium">Execution mode</div>
               <div className="text-[11px] text-muted-foreground">
-                Control whether this issue runs in the shared workspace, a new isolated workspace, or an existing one.
+                Choose how this issue should run on the selected project workspace: use the default execution behavior,
+                create a fresh isolated execution workspace, or reuse an existing execution workspace.
               </div>
               <select
                 className="w-full rounded border border-border bg-transparent px-2 py-1.5 text-xs outline-none"
@@ -1549,7 +1535,7 @@ export function NewIssueDialog() {
                   value={selectedExecutionWorkspaceId}
                   onChange={(e) => setSelectedExecutionWorkspaceId(e.target.value)}
                 >
-                  <option value="">Choose an existing workspace</option>
+                  <option value="">Choose an existing execution workspace</option>
                   {deduplicatedReusableWorkspaces.map((workspace) => (
                     <option key={workspace.id} value={workspace.id}>
                       {workspace.name} · {workspace.status} · {workspace.branchName ?? workspace.cwd ?? workspace.id.slice(0, 8)}

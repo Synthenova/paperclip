@@ -58,6 +58,7 @@ import {
   listAdapterModels,
   requireServerAdapter,
 } from "../adapters/index.js";
+import { resolveDefaultAgentWorkspaceDir } from "../home-paths.js";
 import { redactEventPayload } from "../redaction.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
@@ -76,6 +77,7 @@ import {
 } from "../services/default-agent-instructions.js";
 import { getTelemetryClient } from "../telemetry.js";
 import { agentsHaveFullManagementPermissions } from "../services/full-agent-access.js";
+import { registerWorkspaceExplorerRoutes } from "./workspace-explorer.js";
 
 export function agentRoutes(db: Db) {
   // Legacy hardcoded maps — used as fallback when adapter module does not
@@ -2006,6 +2008,48 @@ export function agentRoutes(db: Db) {
     });
 
     res.json(result.bundle);
+  });
+
+  registerWorkspaceExplorerRoutes({
+    router,
+    basePath: "/agents/:id/workspace",
+    resolveContext: async (req) => {
+      const id = req.params.id as string;
+      const existing = await svc.getById(id);
+      if (!existing) throw notFound("Agent not found");
+      await assertCanReadAgent(req, existing);
+      return {
+        companyId: existing.companyId,
+        entityType: "agent",
+        entityId: existing.id,
+        root: {
+          rootDir: resolveDefaultAgentWorkspaceDir(existing.id),
+          rootName: existing.name || "workspace",
+          ensureExists: true,
+        },
+      };
+    },
+    buildContentPath: (req, relativePath) => {
+      const companyId =
+        typeof req.query.companyId === "string" && req.query.companyId.trim().length > 0
+          ? `?companyId=${encodeURIComponent(req.query.companyId.trim())}&`
+          : "?";
+      return `/api/agents/${encodeURIComponent(req.params.id as string)}/workspace/content${companyId}path=${encodeURIComponent(relativePath)}`;
+    },
+    logMutation: async (req, context, action, details) => {
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        companyId: context.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: `agent.workspace_${action}`,
+        entityType: "agent",
+        entityId: context.entityId,
+        details,
+      });
+    },
   });
 
   router.patch("/agents/:id", validate(updateAgentSchema), async (req, res) => {

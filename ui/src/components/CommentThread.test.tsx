@@ -204,21 +204,16 @@ describe("CommentThread", () => {
   });
 
   it("hides the reopen control and infers reopen for closed agent-assigned issues", async () => {
-    const root = createRoot(container);
     const onAdd = vi.fn(async () => {});
-
-    act(() => {
-      root.render(
-        <MemoryRouter>
-          <CommentThread
-            comments={[]}
-            issueStatus="done"
-            currentAssigneeValue="agent:agent-1"
-            onAdd={onAdd}
-          />
-        </MemoryRouter>,
-      );
-    });
+    const { root } = renderWithQueryClient(
+      <CommentThread
+        comments={[]}
+        issueStatus="done"
+        currentAssigneeValue="agent:agent-1"
+        onAdd={onAdd}
+      />,
+      container,
+    );
 
     expect(container.textContent).not.toContain("Re-open");
 

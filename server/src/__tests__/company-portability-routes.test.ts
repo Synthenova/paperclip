@@ -169,7 +169,24 @@ describe("company portability routes", () => {
     expect(mockCompanyPortabilityService.previewImport).not.toHaveBeenCalled();
   });
 
-  it("keeps global import preview routes board-only", async () => {
+  it("allows agents to use global import preview routes in this fork", async () => {
+    mockCompanyPortabilityService.previewImport.mockResolvedValue({
+      manifest: {
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        includes: { company: true, agents: true, projects: false, issues: false, skills: false },
+        company: null,
+        agents: [],
+        skills: [],
+        projects: [],
+        issues: [],
+        envInputs: [],
+        source: null,
+      },
+      counts: { files: 0, agents: 0, skills: 0, projects: 0, issues: 0 },
+      warnings: [],
+      collisions: [],
+    });
     const app = await createApp({
       type: "agent",
       agentId: "agent-1",
@@ -187,8 +204,8 @@ describe("company portability routes", () => {
         collisionStrategy: "rename",
       });
 
-    expect(res.status).toBe(403);
-    expect(res.body.error).toContain("Board access required");
+    expect(res.status).toBe(200);
+    expect(mockCompanyPortabilityService.previewImport).toHaveBeenCalled();
   });
 
   it("requires instance admin for new-company import preview", async () => {

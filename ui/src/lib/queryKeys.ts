@@ -79,6 +79,11 @@ export const queryKeys = {
     list: (companyId: string) => ["projects", companyId] as const,
     detail: (id: string) => ["projects", "detail", id] as const,
   },
+  workspaceExplorer: {
+    directory: (scopeKey: string, path: string) => ["workspace-explorer", scopeKey, "directory", path] as const,
+    file: (scopeKey: string, path: string) => ["workspace-explorer", scopeKey, "file", path] as const,
+    text: (scopeKey: string, path: string) => ["workspace-explorer", scopeKey, "text", path] as const,
+  },
   goals: {
     list: (companyId: string) => ["goals", companyId] as const,
     detail: (id: string) => ["goals", "detail", id] as const,

@@ -70,6 +70,14 @@ export function resolveIssueReferenceFilesDir(issueId: string): string {
   return path.resolve(resolvePaperclipInstanceRoot(), "issue-reference-files", trimmed);
 }
 
+export function resolveIssueWorkspaceDir(issueId: string): string {
+  const trimmed = issueId.trim();
+  if (!PATH_SEGMENT_RE.test(trimmed)) {
+    throw new Error(`Invalid issue id for workspace path '${issueId}'.`);
+  }
+  return path.resolve(resolvePaperclipInstanceRoot(), "issue-workspaces", trimmed);
+}
+
 function sanitizeFriendlyPathSegment(value: string | null | undefined, fallback = "_default"): string {
   const trimmed = value?.trim() ?? "";
   if (!trimmed) return fallback;

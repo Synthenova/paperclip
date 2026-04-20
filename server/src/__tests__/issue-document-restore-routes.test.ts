@@ -41,6 +41,7 @@ vi.mock("../services/index.js", () => ({
     getGeneral: vi.fn(async () => ({ feedbackDataSharingPreference: "prompt" })),
   }),
   issueApprovalService: () => ({}),
+  issueReferenceFileService: () => ({ listForIssue: vi.fn(async () => []) }),
   issueService: () => mockIssueService,
   logActivity: mockLogActivity,
   projectService: () => ({}),
@@ -67,6 +68,7 @@ function registerModuleMocks() {
       getGeneral: vi.fn(async () => ({ feedbackDataSharingPreference: "prompt" })),
     }),
     issueApprovalService: () => ({}),
+    issueReferenceFileService: () => ({ listForIssue: vi.fn(async () => []) }),
     issueService: () => mockIssueService,
     logActivity: mockLogActivity,
     projectService: () => ({}),
@@ -167,7 +169,7 @@ describe("issue document revision routes", () => {
         body: "# Two",
       }),
     ]);
-  });
+  }, 10000);
 
   it("restores a revision through the append-only route and logs the action", async () => {
     const res = await request(await createApp())

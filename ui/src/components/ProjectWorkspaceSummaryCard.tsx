@@ -6,7 +6,7 @@ import { IssuesQuicklook } from "./IssuesQuicklook";
 import type { ProjectWorkspaceSummary } from "../lib/project-workspaces-tab";
 import { cn, projectWorkspaceUrl } from "../lib/utils";
 import { timeAgo } from "../lib/timeAgo";
-import { Copy, ExternalLink, FolderOpen, GitBranch, Loader2, Play, Square } from "lucide-react";
+import { Copy, ExternalLink, FolderOpen, GitBranch, Loader2, Play, Square, Trash2 } from "lucide-react";
 
 function workspaceKindLabel(kind: ProjectWorkspaceSummary["kind"]) {
   return kind === "execution_workspace" ? "Execution workspace" : "Project workspace";
@@ -23,6 +23,7 @@ interface ProjectWorkspaceSummaryCardProps {
   summary: ProjectWorkspaceSummary;
   runtimeActionKey: string | null;
   runtimeActionPending: boolean;
+  deletePending?: boolean;
   onRuntimeAction: (input: {
     key: string;
     kind: "project_workspace" | "execution_workspace";
@@ -34,6 +35,11 @@ interface ProjectWorkspaceSummaryCardProps {
     name: string;
     status: ExecutionWorkspace["status"];
   }) => void;
+  onDeleteWorkspace?: (input: {
+    id: string;
+    name: string;
+    isPrimary: boolean;
+  }) => void;
 }
 
 export function ProjectWorkspaceSummaryCard({
@@ -41,8 +47,10 @@ export function ProjectWorkspaceSummaryCard({
   summary,
   runtimeActionKey,
   runtimeActionPending,
+  deletePending = false,
   onRuntimeAction,
   onCloseWorkspace,
+  onDeleteWorkspace,
 }: ProjectWorkspaceSummaryCardProps) {
   const visibleIssues = summary.issues.slice(0, 4);
   const hiddenIssueCount = Math.max(summary.issues.length - visibleIssues.length, 0);
@@ -138,6 +146,22 @@ export function ProjectWorkspaceSummaryCard({
                 })}
               >
                 {summary.executionWorkspaceStatus === "cleanup_failed" ? "Retry close" : "Close workspace"}
+              </Button>
+            ) : null}
+            {summary.kind === "project_workspace" && onDeleteWorkspace ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 px-3 text-xs text-muted-foreground"
+                disabled={deletePending}
+                onClick={() => onDeleteWorkspace({
+                  id: summary.workspaceId,
+                  name: summary.workspaceName,
+                  isPrimary: summary.isPrimary,
+                })}
+              >
+                {deletePending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Trash2 className="mr-2 h-3.5 w-3.5" />}
+                Delete
               </Button>
             ) : null}
           </div>

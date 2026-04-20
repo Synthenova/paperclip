@@ -66,6 +66,7 @@ function createSummary(overrides: Partial<ProjectWorkspaceSummary> = {}): Projec
     kind: overrides.kind ?? "execution_workspace",
     workspaceId: overrides.workspaceId ?? "workspace-1",
     workspaceName: overrides.workspaceName ?? "PAP-989-multi-user-implementation",
+    isPrimary: overrides.isPrimary ?? false,
     cwd: overrides.cwd ?? "/worktrees/PAP-989-multi-user-implementation",
     branchName: overrides.branchName ?? "PAP-989-multi-user-implementation",
     lastUpdatedAt: overrides.lastUpdatedAt ?? new Date("2026-04-12T00:00:00Z"),

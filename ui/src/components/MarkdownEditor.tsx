@@ -1215,10 +1215,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
                             "flex items-center gap-2 w-full px-3 py-1.5 text-sm text-left hover:bg-accent/50 transition-colors",
                             optionIndex === mentionIndex && "bg-accent",
                           )}
-                          onPointerDown={(e) => {
-                            e.preventDefault(); // prevent blur
-                            selectMention(option);
-                          }}
+                          onPointerDown={(e) => handleAutocompletePress(e, option)}
+                          onMouseDown={(e) => handleAutocompletePress(e, option)}
+                          onTouchStart={(e) => handleAutocompletePress(e, option)}
                           onMouseEnter={() => setMentionIndex(optionIndex)}
                         >
                           {option.kind === "project" && option.projectId ? (

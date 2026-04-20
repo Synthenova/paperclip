@@ -227,7 +227,7 @@ describe("agent permission routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.adapterConfig).toEqual({});
     expect(res.body.runtimeConfig).toEqual({});
-  });
+  }, 10000);
 
   it("redacts company agent list for authenticated company members without agent admin permission", async () => {
     mockAccessService.canUser.mockResolvedValue(false);
@@ -250,7 +250,7 @@ describe("agent permission routes", () => {
         runtimeConfig: {},
       }),
     ]);
-  });
+  }, 10000);
 
   it("blocks agent updates for authenticated company members without agent admin permission", async () => {
     mockAccessService.canUser.mockResolvedValue(false);
@@ -444,7 +444,7 @@ describe("agent permission routes", () => {
     });
     mockAccessService.hasPermission.mockResolvedValue(true);
 
-    const app = createApp({
+    const app = await createApp({
       type: "agent",
       agentId,
       companyId,

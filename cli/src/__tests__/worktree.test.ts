@@ -845,7 +845,6 @@ describe("worktree helpers", () => {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   }, 60_000);
-  }, 20_000);
 
   it("no-ops on the primary checkout unless --branch is provided", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-worktree-repair-primary-"));

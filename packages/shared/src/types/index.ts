@@ -88,6 +88,13 @@ export type {
   IssueExecutionWorkspaceSettings,
 } from "./workspace-runtime.js";
 export type {
+  WorkspaceExplorerEntryKind,
+  WorkspaceExplorerRenderKind,
+  WorkspaceExplorerEntry,
+  WorkspaceExplorerDirectory,
+  WorkspaceExplorerFileMeta,
+} from "./workspace-explorer.js";
+export type {
   WorkspaceOperation,
   WorkspaceOperationPhase,
   WorkspaceOperationStatus,

@@ -566,6 +566,16 @@ async function resolveGitOwnerRepoRoot(cwd: string): Promise<string> {
   return path.dirname(path.resolve(checkoutRoot, commonDir));
 }
 
+function resolveExecutionWorkspaceCwdFromBase(input: {
+  baseCwd: string;
+  checkoutRoot: string;
+  worktreePath: string;
+}) {
+  const relativeSubpath = path.relative(path.resolve(input.checkoutRoot), path.resolve(input.baseCwd));
+  if (!relativeSubpath || relativeSubpath === ".") return input.worktreePath;
+  return path.join(input.worktreePath, relativeSubpath);
+}
+
 async function findRegisteredGitWorktreeByBranch(repoRoot: string, branchName: string): Promise<string | null> {
   const raw = await runGit(["worktree", "list", "--porcelain"], repoRoot).catch(() => null);
   if (!raw) return null;
@@ -998,6 +1008,7 @@ export async function realizeExecutionWorkspace(input: {
     };
   }
 
+  const checkoutRoot = path.resolve(await runGit(["rev-parse", "--show-toplevel"], input.base.baseCwd));
   const repoRoot = await resolveGitOwnerRepoRoot(input.base.baseCwd);
   const branchTemplate = asString(rawStrategy.branchTemplate, "{{issue.identifier}}-{{slug}}");
   const renderedBranch = renderWorkspaceTemplate(branchTemplate, {
@@ -1022,6 +1033,11 @@ export async function realizeExecutionWorkspace(input: {
   await fs.mkdir(worktreeParentDir, { recursive: true });
 
   async function reuseExistingWorktree(reusablePath: string) {
+    const executionCwd = resolveExecutionWorkspaceCwdFromBase({
+      baseCwd: input.base.baseCwd,
+      checkoutRoot,
+      worktreePath: reusablePath,
+    });
     if (input.recorder) {
       await input.recorder.recordOperation({
         phase: "worktree_prepare",
@@ -1055,7 +1071,7 @@ export async function realizeExecutionWorkspace(input: {
     return {
       ...input.base,
       strategy: "git_worktree" as const,
-      cwd: reusablePath,
+      cwd: executionCwd,
       branchName,
       worktreePath: reusablePath,
       warnings: [],
@@ -1148,11 +1164,16 @@ export async function realizeExecutionWorkspace(input: {
     created: true,
     recorder: input.recorder ?? null,
   });
+  const executionCwd = resolveExecutionWorkspaceCwdFromBase({
+    baseCwd: input.base.baseCwd,
+    checkoutRoot,
+    worktreePath,
+  });
 
   return {
     ...input.base,
     strategy: "git_worktree",
-    cwd: worktreePath,
+    cwd: executionCwd,
     branchName,
     worktreePath,
     warnings: [],

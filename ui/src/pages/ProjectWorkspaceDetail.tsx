@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isUuidLike, type ProjectWorkspace } from "@paperclipai/shared";
-import { ArrowLeft, Check, ExternalLink, Loader2, Sparkles } from "lucide-react";
+import { ArrowLeft, Check, ExternalLink, Loader2, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ChoosePathButton } from "../components/PathInstructionsModal";
@@ -12,6 +12,7 @@ import {
   WorkspaceRuntimeControls,
   type WorkspaceRuntimeControlRequest,
 } from "../components/WorkspaceRuntimeControls";
+import { WorkspaceExplorer } from "../components/WorkspaceExplorer";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -306,6 +307,16 @@ export function ProjectWorkspaceDetail() {
       setErrorMessage(error instanceof Error ? error.message : "Failed to update workspace.");
     },
   });
+  const deleteWorkspace = useMutation({
+    mutationFn: () => projectsApi.removeWorkspace(project!.id, routeWorkspaceId, lookupCompanyId),
+    onSuccess: () => {
+      invalidateProject();
+      navigate(`/projects/${canonicalProjectRef}/workspaces`, { replace: true });
+    },
+    onError: (error) => {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to delete workspace.");
+    },
+  });
 
   const controlRuntimeServices = useMutation({
     mutationFn: (request: WorkspaceRuntimeControlRequest) =>
@@ -579,6 +590,23 @@ export function ProjectWorkspaceDetail() {
               >
                 Reset
               </Button>
+              <Button
+                variant="ghost"
+                className="w-full text-destructive hover:text-destructive sm:w-auto"
+                disabled={deleteWorkspace.isPending}
+                onClick={() => {
+                  const confirmed = window.confirm(
+                    workspace.isPrimary
+                      ? `Delete primary workspace "${workspace.name}"? If another workspace exists, Paperclip will promote the next one to primary.`
+                      : `Delete workspace "${workspace.name}"?`,
+                  );
+                  if (!confirmed) return;
+                  deleteWorkspace.mutate();
+                }}
+              >
+                {deleteWorkspace.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                Delete workspace
+              </Button>
               {errorMessage ? <p className="text-sm text-destructive">{errorMessage}</p> : null}
               {!errorMessage && runtimeActionMessage ? <p className="text-sm text-muted-foreground">{runtimeActionMessage}</p> : null}
               {!errorMessage && !isDirty ? <p className="text-sm text-muted-foreground">No unsaved changes.</p> : null}
@@ -642,6 +670,14 @@ export function ProjectWorkspaceDetail() {
             />
           </div>
         </div>
+
+        <WorkspaceExplorer
+          scope={{ type: "project", projectId: project.id, workspaceId: workspace.id, companyId: lookupCompanyId }}
+          title="Workspace Explorer"
+          description="Browse and manage files directly inside this project workspace."
+          emptyMessage="No files in this workspace yet."
+          unavailableMessage="This project workspace path is unavailable. Set a valid local path to browse it."
+        />
       </div>
     </div>
   );

@@ -42,6 +42,7 @@ import { RunButton, PauseResumeButton } from "../components/AgentActionButtons";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
 import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
 import { ScrollToBottom } from "../components/ScrollToBottom";
+import { WorkspaceExplorer } from "../components/WorkspaceExplorer";
 import { formatCents, formatDate, relativeTime, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { cn } from "../lib/utils";
 import { Button } from "@/components/ui/button";
@@ -225,11 +226,12 @@ function scrollToContainerBottom(container: ScrollContainer, behavior: ScrollBeh
   container.scrollTo({ top: container.scrollHeight, behavior });
 }
 
-type AgentDetailView = "dashboard" | "chat" | "instructions" | "configuration" | "skills" | "runs" | "budget";
+type AgentDetailView = "dashboard" | "chat" | "instructions" | "workspace" | "configuration" | "skills" | "runs" | "budget";
 
 function parseAgentDetailView(value: string | null): AgentDetailView {
   if (value === "chat") return "chat";
   if (value === "instructions" || value === "prompts") return "instructions";
+  if (value === "workspace") return "workspace";
   if (value === "configure" || value === "configuration") return "configuration";
   if (value === "skills") return "skills";
   if (value === "budget") return "budget";
@@ -749,6 +751,8 @@ export function AgentDetail() {
         ? "chat"
         : activeView === "instructions"
         ? "instructions"
+        : activeView === "workspace"
+          ? "workspace"
         : activeView === "configuration"
           ? "configuration"
           : activeView === "skills"
@@ -874,6 +878,8 @@ export function AgentDetail() {
         crumbs.push({ label: "Chat" });
       } else if (activeView === "instructions") {
         crumbs.push({ label: "Instructions" });
+      } else if (activeView === "workspace") {
+        crumbs.push({ label: "Workspace" });
       } else if (activeView === "configuration") {
         crumbs.push({ label: "Configuration" });
       // } else if (activeView === "skills") { // TODO: bring back later
@@ -1019,6 +1025,7 @@ export function AgentDetail() {
               { value: "dashboard", label: "Dashboard" },
               { value: "chat", label: "Chat" },
               { value: "instructions", label: "Instructions" },
+              { value: "workspace", label: "Workspace" },
               { value: "skills", label: "Skills" },
               { value: "configuration", label: "Configuration" },
               { value: "runs", label: "Runs" },
@@ -1121,6 +1128,15 @@ export function AgentDetail() {
           onSaveActionChange={setSaveConfigAction}
           onCancelActionChange={setCancelConfigAction}
           onSavingChange={setConfigSaving}
+        />
+      )}
+
+      {activeView === "workspace" && (
+        <WorkspaceExplorer
+          scope={{ type: "agent", agentId: agent.id, companyId: resolvedCompanyId ?? undefined }}
+          title="Workspace"
+          description="Browse and manage the real agent workspace. This is separate from the Instructions bundle."
+          emptyMessage="No files in this workspace yet."
         />
       )}
 

@@ -13,7 +13,7 @@ import {
 import { trackProjectCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
 import { projectService, logActivity, secretService, workspaceOperationService } from "../services/index.js";
-import { conflict } from "../errors.js";
+import { conflict, notFound, unprocessable } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import {
   buildWorkspaceRuntimeDesiredStatePatch,
@@ -22,6 +22,8 @@ import {
   startRuntimeServicesForWorkspaceControl,
   stopRuntimeServicesForProjectWorkspace,
 } from "../services/workspace-runtime.js";
+import { ensureManagedProjectWorkspace } from "../services/managed-project-workspaces.js";
+import { registerWorkspaceExplorerRoutes } from "./workspace-explorer.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
   collectProjectExecutionWorkspaceCommandPaths,
@@ -561,6 +563,62 @@ export function projectRoutes(db: Db) {
 
   router.post("/projects/:id/workspaces/:workspaceId/runtime-services/:action", validate(workspaceRuntimeControlTargetSchema), handleProjectWorkspaceRuntimeCommand);
   router.post("/projects/:id/workspaces/:workspaceId/runtime-commands/:action", validate(workspaceRuntimeControlTargetSchema), handleProjectWorkspaceRuntimeCommand);
+
+  registerWorkspaceExplorerRoutes({
+    router,
+    basePath: "/projects/:id/workspaces/:workspaceId/workspace",
+    resolveContext: async (req) => {
+      const id = req.params.id as string;
+      const workspaceId = req.params.workspaceId as string;
+      const project = await svc.getById(id);
+      if (!project) throw notFound("Project not found");
+      assertCompanyAccess(req, project.companyId);
+      const workspace = project.workspaces.find((entry) => entry.id === workspaceId) ?? null;
+      if (!workspace) throw notFound("Project workspace not found");
+      let rootDir = workspace.cwd;
+      if (!rootDir && workspace.repoUrl) {
+        rootDir = (await ensureManagedProjectWorkspace({
+          companyId: project.companyId,
+          projectId: project.id,
+          repoUrl: workspace.repoUrl,
+        })).cwd;
+      }
+      if (!rootDir) throw unprocessable("Project workspace has no local path configured");
+      return {
+        companyId: project.companyId,
+        entityType: "project",
+        entityId: project.id,
+        root: {
+          rootDir,
+          rootName: workspace.name || "workspace",
+          ensureExists: false,
+        },
+      };
+    },
+    buildContentPath: (req, relativePath) => {
+      const companyId =
+        typeof req.query.companyId === "string" && req.query.companyId.trim().length > 0
+          ? `?companyId=${encodeURIComponent(req.query.companyId.trim())}&`
+          : "?";
+      return `/api/projects/${encodeURIComponent(req.params.id as string)}/workspaces/${encodeURIComponent(req.params.workspaceId as string)}/workspace/content${companyId}path=${encodeURIComponent(relativePath)}`;
+    },
+    logMutation: async (req, context, action, details) => {
+      const actor = getActorInfo(req);
+      await logActivity(db, {
+        companyId: context.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        action: `project.workspace_${action}`,
+        entityType: "project",
+        entityId: context.entityId,
+        details: {
+          workspaceId: req.params.workspaceId as string,
+          ...details,
+        },
+      });
+    },
+  });
 
   router.delete("/projects/:id/workspaces/:workspaceId", async (req, res) => {
     const id = req.params.id as string;

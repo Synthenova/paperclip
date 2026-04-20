@@ -192,6 +192,21 @@ export {
 } from "./execution-workspace.js";
 
 export {
+  workspaceExplorerPathSchema,
+  createWorkspaceExplorerFileSchema,
+  updateWorkspaceExplorerFileSchema,
+  createWorkspaceExplorerFolderSchema,
+  renameWorkspaceExplorerEntrySchema,
+  addWorkspaceExplorerRepoSchema,
+  type WorkspaceExplorerPath,
+  type CreateWorkspaceExplorerFile,
+  type UpdateWorkspaceExplorerFile,
+  type CreateWorkspaceExplorerFolder,
+  type RenameWorkspaceExplorerEntry,
+  type AddWorkspaceExplorerRepo,
+} from "./workspace-explorer.js";
+
+export {
   createGoalSchema,
   updateGoalSchema,
   type CreateGoal,

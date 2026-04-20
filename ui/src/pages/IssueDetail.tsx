@@ -1,8 +1,9 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type Ref } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type Ref } from "react";
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
+import { createWorkspaceExplorerApi } from "../api/workspace-explorer";
 import { approvalsApi } from "../api/approvals";
 import { activityApi, type RunForIssue } from "../api/activity";
 import { heartbeatsApi, type ActiveRunForIssue, type LiveRunForIssue } from "../api/heartbeats";
@@ -59,17 +60,16 @@ import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils"
 import { ApprovalCard } from "../components/ApprovalCard";
 import { InlineEditor } from "../components/InlineEditor";
 import { IssueChatThread, type IssueChatComposerHandle } from "../components/IssueChatThread";
-import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssuesList } from "../components/IssuesList";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import { LocalFileViewerDialog } from "../components/LocalFileViewerDialog";
 import type { MentionOption } from "../components/MarkdownEditor";
-import { ImageGalleryModal } from "../components/ImageGalleryModal";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { StatusIcon } from "../components/StatusIcon";
 import { PriorityIcon } from "../components/PriorityIcon";
 import { Identity } from "../components/Identity";
+import { WorkspaceExplorer } from "../components/WorkspaceExplorer";
 import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { Separator } from "@/components/ui/separator";
@@ -83,7 +83,6 @@ import { formatIssueActivityAction } from "@/lib/activity-format";
 import { buildIssuePropertiesPanelKey } from "../lib/issue-properties-panel-key";
 import { shouldRenderRichSubIssuesSection } from "../lib/issue-detail-subissues";
 import { buildSubIssueDefaultsForViewer } from "../lib/subIssueDefaults";
-import { createZipArchive } from "../lib/zip";
 import {
   Activity as ActivityIcon,
   Archive,
@@ -96,11 +95,9 @@ import {
   MessageSquare,
   MoreHorizontal,
   MoreVertical,
-  Paperclip,
   Plus,
   Repeat,
   SlidersHorizontal,
-  Trash2,
 } from "lucide-react";
 import {
   getClosedIsolatedExecutionWorkspaceMessage,
@@ -109,9 +106,7 @@ import {
   type Agent,
   type FeedbackVote,
   type Issue,
-  type IssueAttachment,
   type IssueComment,
-  type IssueReferenceFile,
 } from "@paperclipai/shared";
 
 type CommentReassignment = IssueCommentReassignment;
@@ -166,70 +161,6 @@ function usageNumber(usage: Record<string, unknown> | null, ...keys: string[]) {
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
   return text.slice(0, max - 1) + "\u2026";
-}
-
-function isMarkdownFile(file: File) {
-  const name = file.name.toLowerCase();
-  return (
-    name.endsWith(".md") ||
-    name.endsWith(".markdown") ||
-    file.type === "text/markdown"
-  );
-}
-
-function fileBaseName(filename: string) {
-  return filename.replace(/\.[^.]+$/, "");
-}
-
-function slugifyDocumentKey(input: string) {
-  const slug = input
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug || "document";
-}
-
-function titleizeFilename(input: string) {
-  return input
-    .split(/[-_ ]+/g)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function bytesToBase64(bytes: Uint8Array) {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
-async function buildFolderArchiveFile(files: FileList) {
-  const selectedFiles = Array.from(files).filter((file) => (file.webkitRelativePath || file.name).length > 0);
-  if (selectedFiles.length === 0) {
-    throw new Error("No folder files were selected.");
-  }
-  const firstRelativePath = selectedFiles[0]!.webkitRelativePath || selectedFiles[0]!.name;
-  const rootName = firstRelativePath.split("/").filter(Boolean)[0] ?? (fileBaseName(selectedFiles[0]!.name) || "folder");
-  const archiveEntries: Record<string, { encoding: "base64"; data: string; contentType: string }> = {};
-  for (const file of selectedFiles) {
-    const relativePath = file.webkitRelativePath || file.name;
-    const pathParts = relativePath.split("/").filter(Boolean);
-    const archivePath = pathParts.length > 1 ? pathParts.slice(1).join("/") : pathParts[0]!;
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    archiveEntries[archivePath] = {
-      encoding: "base64",
-      data: bytesToBase64(bytes),
-      contentType: file.type || "application/octet-stream",
-    };
-  }
-  const archiveBytes = createZipArchive(archiveEntries, rootName);
-  const archiveBuffer = new ArrayBuffer(archiveBytes.byteLength);
-  new Uint8Array(archiveBuffer).set(archiveBytes);
-  return {
-    name: rootName,
-    file: new File([archiveBuffer], `${rootName}.zip`, { type: "application/zip" }),
-  };
 }
 
 function mergeOptimisticFeedbackVote(
@@ -358,7 +289,7 @@ function IssueDetailLoadingState({
   const identifier = headerSeed?.identifier ?? headerSeed?.id.slice(0, 8) ?? null;
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-6xl space-y-6">
       <div className="space-y-3">
         <Skeleton className="h-3 w-40" />
 
@@ -911,20 +842,9 @@ export function IssueDetail() {
     action: "approve" | "reject";
   } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [attachmentError, setAttachmentError] = useState<string | null>(null);
-  const [attachmentDragActive, setAttachmentDragActive] = useState(false);
-  const [referenceFileError, setReferenceFileError] = useState<string | null>(null);
-  const [showRepoReferenceForm, setShowRepoReferenceForm] = useState(false);
-  const [repoReferenceName, setRepoReferenceName] = useState("");
-  const [repoReferenceUrl, setRepoReferenceUrl] = useState("");
-  const [repoReferenceRef, setRepoReferenceRef] = useState("");
-  const [galleryOpen, setGalleryOpen] = useState(false);
-  const [galleryIndex, setGalleryIndex] = useState(0);
   const [localFileViewerPath, setLocalFileViewerPath] = useState<string | null>(null);
   const [optimisticComments, setOptimisticComments] = useState<OptimisticIssueComment[]>([]);
   const [pendingCommentComposerFocusKey, setPendingCommentComposerFocusKey] = useState(0);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const folderInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
   const commentComposerRef = useRef<IssueChatComposerHandle | null>(null);
   const cancelledQueuedOptimisticCommentIdsRef = useRef(new Set<string>());
@@ -947,7 +867,10 @@ export function IssueDetail() {
     enabled: !!issueId,
   });
   const resolvedCompanyId = issue?.companyId ?? selectedCompanyId;
-  const referenceFiles = issue?.referenceFiles ?? [];
+  const issueWorkspaceApi = useMemo(
+    () => (issueId ? createWorkspaceExplorerApi({ type: "issue", issueId }) : null),
+    [issueId],
+  );
   const commentComposerDisabledReason = useMemo(() => {
     if (!issue?.currentExecutionWorkspace || !isClosedIsolatedExecutionWorkspace(issue.currentExecutionWorkspace)) {
       return null;
@@ -979,13 +902,6 @@ export function IssueDetail() {
     () => flattenIssueCommentPages(commentPages?.pages),
     [commentPages?.pages],
   );
-
-  const { data: attachments, isLoading: attachmentsLoading } = useQuery({
-    queryKey: queryKeys.issues.attachments(issueId!),
-    queryFn: () => issuesApi.listAttachments(issueId!),
-    enabled: !!issueId,
-    placeholderData: keepPreviousDataForSameQueryTail<IssueAttachment[]>(issueId ?? "pending"),
-  });
 
   const { data: liveRunCount = 0 } = useQuery<LiveRunForIssue[], Error, number>({
     queryKey: queryKeys.issues.liveRuns(issueId!),
@@ -1717,100 +1633,11 @@ export function IssueDetail() {
     },
   });
 
-  const uploadAttachment = useMutation({
-    mutationFn: async (file: File) => {
-      if (!selectedCompanyId) throw new Error("No company selected");
-      return issuesApi.uploadAttachment(selectedCompanyId, issueId!, file);
-    },
-    onSuccess: () => {
-      setAttachmentError(null);
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.attachments(issueId!) });
-      invalidateIssueDetail();
-    },
-    onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : "Upload failed");
-    },
-  });
-
-  const uploadReferenceFolder = useMutation({
-    mutationFn: async (archive: { name: string; file: File }) => {
-      if (!selectedCompanyId) throw new Error("No company selected");
-      return issuesApi.uploadReferenceFolder(selectedCompanyId, issueId!, archive);
-    },
-    onSuccess: () => {
-      setReferenceFileError(null);
-      invalidateIssueDetail();
-    },
-    onError: (err) => {
-      setReferenceFileError(err instanceof Error ? err.message : "Folder upload failed");
-    },
-  });
-
-  const createReferenceRepo = useMutation({
-    mutationFn: async (input: { name: string; repoUrl: string; repoRef?: string | null }) => {
-      if (!selectedCompanyId) throw new Error("No company selected");
-      return issuesApi.createReferenceRepo(selectedCompanyId, issueId!, input);
-    },
-    onSuccess: () => {
-      setReferenceFileError(null);
-      setShowRepoReferenceForm(false);
-      setRepoReferenceName("");
-      setRepoReferenceUrl("");
-      setRepoReferenceRef("");
-      invalidateIssueDetail();
-    },
-    onError: (err) => {
-      setReferenceFileError(err instanceof Error ? err.message : "Repo link failed");
-    },
-  });
-
-  const deleteReferenceFile = useMutation({
-    mutationFn: (referenceId: string) => issuesApi.deleteReferenceFile(issueId!, referenceId),
-    onSuccess: () => {
-      setReferenceFileError(null);
-      invalidateIssueDetail();
-    },
-    onError: (err) => {
-      setReferenceFileError(err instanceof Error ? err.message : "Delete failed");
-    },
-  });
-
-  const importMarkdownDocument = useMutation({
-    mutationFn: async (file: File) => {
-      const baseName = fileBaseName(file.name);
-      const key = slugifyDocumentKey(baseName);
-      const existing = (issue?.documentSummaries ?? []).find((doc) => doc.key === key) ?? null;
-      const body = await file.text();
-      const inferredTitle = titleizeFilename(baseName);
-      const nextTitle = existing?.title ?? inferredTitle ?? null;
-      return issuesApi.upsertDocument(issueId!, key, {
-        title: key === "plan" ? null : nextTitle,
-        format: "markdown",
-        body,
-        baseRevisionId: existing?.latestRevisionId ?? null,
-      });
-    },
-    onSuccess: () => {
-      setAttachmentError(null);
-      invalidateIssueDetail();
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.documents(issueId!) });
-    },
-    onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : "Document import failed");
-    },
-  });
-
-  const deleteAttachment = useMutation({
-    mutationFn: (attachmentId: string) => issuesApi.deleteAttachment(attachmentId),
-    onSuccess: () => {
-      setAttachmentError(null);
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.attachments(issueId!) });
-      invalidateIssueDetail();
-    },
-    onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : "Delete failed");
-    },
-  });
+  const uploadIssueWorkspaceFile = useCallback(async (file: File) => {
+    if (!issueWorkspaceApi) throw new Error("Issue workspace is unavailable");
+    const entry = await issueWorkspaceApi.uploadFile({ file });
+    return issueWorkspaceApi.file(entry.path);
+  }, [issueWorkspaceApi]);
 
   const archiveFromInbox = useMutation({
     mutationFn: (id: string) => issuesApi.archiveFromInbox(id),
@@ -2029,31 +1856,11 @@ export function IssueDetail() {
     commentComposerRef.current?.focus();
   }, [detailTab, pendingCommentComposerFocusKey]);
 
-  const isImageAttachment = (attachment: IssueAttachment) => attachment.contentType.startsWith("image/");
-  const attachmentList = attachments ?? [];
-  const imageAttachments = attachmentList.filter(isImageAttachment);
-  const nonImageAttachments = attachmentList.filter((a) => !isImageAttachment(a));
-
   const handleChatImageClick = useCallback(
     (src: string) => {
-      // Try exact contentPath match first
-      let idx = imageAttachments.findIndex((a) => a.contentPath === src);
-      if (idx < 0) {
-        // Try matching by asset ID extracted from /api/assets/{assetId}/content URLs
-        const assetMatch = src.match(/\/api\/assets\/([^/]+)\/content/);
-        if (assetMatch) {
-          idx = imageAttachments.findIndex((a) => a.assetId === assetMatch[1]);
-        }
-      }
-      if (idx >= 0) {
-        setGalleryIndex(idx);
-        setGalleryOpen(true);
-      } else {
-        // Image not in attachment list — open in new tab
-        window.open(src, "_blank");
-      }
+      window.open(src, "_blank", "noopener,noreferrer");
     },
-    [imageAttachments],
+    [],
   );
 
   const handleOpenLocalFile = useCallback((filePath: string) => {
@@ -2134,7 +1941,6 @@ export function IssueDetail() {
     return () => setMobileToolbar(null);
   }, [showInboxToolbar, backHref, issue?.id, issueHidden, archivePending, setMobileToolbar]);
 
-  const attachmentsInitialLoading = attachmentsLoading && attachments === undefined;
   const loadOlderComments = useCallback(() => {
     void fetchOlderComments();
   }, [fetchOlderComments]);
@@ -2156,21 +1962,15 @@ export function IssueDetail() {
     await addComment.mutateAsync({ body, reopen });
   }, [addComment, addCommentAndReassign]);
   const handleCommentImageUpload = useCallback(async (file: File) => {
-    const attachment = await uploadAttachment.mutateAsync(file);
-    return attachment.contentPath;
-  }, [uploadAttachment]);
+    const uploaded = await uploadIssueWorkspaceFile(file);
+    return uploaded.contentPath;
+  }, [uploadIssueWorkspaceFile]);
   const handleCommentAttachImage = useCallback(async (file: File) => {
-    await uploadAttachment.mutateAsync(file);
-  }, [uploadAttachment]);
+    await uploadIssueWorkspaceFile(file);
+  }, [uploadIssueWorkspaceFile]);
   const handleInterruptQueuedRun = useCallback(async (runId: string) => {
     await interruptQueuedComment.mutateAsync(runId);
   }, [interruptQueuedComment]);
-  useEffect(() => {
-    const input = folderInputRef.current;
-    if (!input) return;
-    input.setAttribute("webkitdirectory", "");
-    input.setAttribute("directory", "");
-  }, []);
 
   if (isLoading) return <IssueDetailLoadingState headerSeed={issueHeaderSeed} />;
   if (error) return <p className="text-sm text-destructive">{error.message}</p>;
@@ -2178,127 +1978,6 @@ export function IssueDetail() {
 
   // Ancestors are returned oldest-first from the server (root at end, immediate parent at start)
   const ancestors = issue.ancestors ?? [];
-
-  const handleFilePicked = async (evt: ChangeEvent<HTMLInputElement>) => {
-    const files = evt.target.files;
-    if (!files || files.length === 0) return;
-    for (const file of Array.from(files)) {
-      if (isMarkdownFile(file)) {
-        await importMarkdownDocument.mutateAsync(file);
-      } else {
-        await uploadAttachment.mutateAsync(file);
-      }
-    }
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
-
-  const handleFolderPicked = async (evt: ChangeEvent<HTMLInputElement>) => {
-    const files = evt.target.files;
-    if (!files || files.length === 0) return;
-    try {
-      const archive = await buildFolderArchiveFile(files);
-      await uploadReferenceFolder.mutateAsync(archive);
-    } finally {
-      if (folderInputRef.current) {
-        folderInputRef.current.value = "";
-      }
-    }
-  };
-
-  const handleCreateRepoReference = async () => {
-    const name = repoReferenceName.trim();
-    const repoUrl = repoReferenceUrl.trim();
-    const repoRef = repoReferenceRef.trim();
-    if (!name || !repoUrl) {
-      setReferenceFileError("Repo name and URL are required");
-      return;
-    }
-    await createReferenceRepo.mutateAsync({
-      name,
-      repoUrl,
-      repoRef: repoRef || null,
-    });
-  };
-
-  const handleAttachmentDrop = async (evt: DragEvent<HTMLDivElement>) => {
-    evt.preventDefault();
-    setAttachmentDragActive(false);
-    const files = evt.dataTransfer.files;
-    if (!files || files.length === 0) return;
-    for (const file of Array.from(files)) {
-      if (isMarkdownFile(file)) {
-        await importMarkdownDocument.mutateAsync(file);
-      } else {
-        await uploadAttachment.mutateAsync(file);
-      }
-    }
-  };
-
-  const hasAttachments = attachmentList.length > 0;
-  const isReferenceFilePending =
-    uploadReferenceFolder.isPending || createReferenceRepo.isPending || deleteReferenceFile.isPending;
-  const attachmentUploadButton = (
-    <>
-      <input
-        ref={fileInputRef}
-        type="file"
-        className="hidden"
-        onChange={handleFilePicked}
-        multiple
-      />
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => fileInputRef.current?.click()}
-        disabled={uploadAttachment.isPending || importMarkdownDocument.isPending}
-        className={cn(
-          "shadow-none",
-          attachmentDragActive && "border-primary bg-primary/5",
-        )}
-      >
-        <Paperclip className="h-3.5 w-3.5 mr-1.5" />
-        {uploadAttachment.isPending || importMarkdownDocument.isPending ? "Uploading..." : (
-          <>
-            <span className="hidden sm:inline">Upload attachment</span>
-            <span className="sm:hidden">Upload</span>
-          </>
-        )}
-      </Button>
-    </>
-  );
-  const referenceFileActions = (
-    <div className="flex flex-wrap items-center gap-2">
-      <input
-        ref={folderInputRef}
-        type="file"
-        className="hidden"
-        multiple
-        onChange={handleFolderPicked}
-      />
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => folderInputRef.current?.click()}
-        disabled={isReferenceFilePending}
-        className="shadow-none"
-      >
-        <Paperclip className="h-3.5 w-3.5 mr-1.5" />
-        {uploadReferenceFolder.isPending ? "Uploading folder..." : "Upload folder"}
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => setShowRepoReferenceForm((current) => !current)}
-        disabled={isReferenceFilePending}
-        className="shadow-none"
-      >
-        <Plus className="h-3.5 w-3.5 mr-1.5" />
-        {showRepoReferenceForm ? "Cancel repo link" : "Link repo"}
-      </Button>
-    </div>
-  );
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -2487,13 +2166,8 @@ export function IssueDetail() {
           placeholder="Add a description..."
           multiline
           mentions={mentionOptions}
-          imageUploadHandler={async (file) => {
-            const attachment = await uploadAttachment.mutateAsync(file);
-            return attachment.contentPath;
-          }}
-          onDropFile={async (file) => {
-            await uploadAttachment.mutateAsync(file);
-          }}
+          imageUploadHandler={handleCommentImageUpload}
+          onDropFile={handleCommentAttachImage}
         />
       </div>
 
@@ -2566,262 +2240,19 @@ export function IssueDetail() {
         </div>
       )}
 
-      <IssueDocumentsSection
-        issue={issue}
-        canDeleteDocuments={Boolean(session?.user?.id)}
-        feedbackVotes={feedbackVotes}
-        feedbackDataSharingPreference={feedbackDataSharingPreference}
-        feedbackTermsUrl={FEEDBACK_TERMS_URL}
-        mentions={mentionOptions}
-        imageUploadHandler={async (file) => {
-          const attachment = await uploadAttachment.mutateAsync(file);
-          return attachment.contentPath;
-        }}
-        onOpenLocalFile={handleOpenLocalFile}
-        onVote={async (revisionId, vote, options) => {
-          await feedbackVoteMutation.mutateAsync({
-            targetType: "issue_document_revision",
-            targetId: revisionId,
-            vote,
-            reason: options?.reason,
-            allowSharing: options?.allowSharing,
-            sharingPreferenceAtSubmit: feedbackDataSharingPreference,
-          });
-        }}
-        extraActions={!hasAttachments ? attachmentUploadButton : null}
-      />
-
-      <div className="space-y-3 rounded-lg border border-border/60 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-sm font-medium text-muted-foreground">Reference Files</h3>
-          {referenceFileActions}
+      <details open className="rounded-lg border border-border/60">
+        <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-muted-foreground">
+          Issue Workspace
+        </summary>
+        <div className="border-t border-border/60 p-3">
+          <WorkspaceExplorer
+            scope={{ type: "issue", issueId: issue.id }}
+            title="Issue Files"
+            description="Use this issue workspace to add, browse, and manage files for the issue."
+            emptyMessage="No files in this issue workspace yet."
+          />
         </div>
-        {referenceFileError ? (
-          <p className="text-xs text-destructive">{referenceFileError}</p>
-        ) : null}
-        {showRepoReferenceForm ? (
-          <div className="grid gap-2 rounded-md border border-border/60 bg-muted/20 p-3">
-            <input
-              type="text"
-              value={repoReferenceName}
-              onChange={(evt) => setRepoReferenceName(evt.target.value)}
-              placeholder="Reference name"
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-            />
-            <input
-              type="url"
-              value={repoReferenceUrl}
-              onChange={(evt) => setRepoReferenceUrl(evt.target.value)}
-              placeholder="https://github.com/org/repo"
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-            />
-            <input
-              type="text"
-              value={repoReferenceRef}
-              onChange={(evt) => setRepoReferenceRef(evt.target.value)}
-              placeholder="Branch or ref (optional)"
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-            />
-            <div className="flex justify-end">
-              <Button
-                size="sm"
-                onClick={() => void handleCreateRepoReference()}
-                disabled={createReferenceRepo.isPending}
-              >
-                {createReferenceRepo.isPending ? "Linking..." : "Save repo link"}
-              </Button>
-            </div>
-          </div>
-        ) : null}
-        {referenceFiles.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            No issue reference files yet. Documents and uploaded attachments will also appear here once present.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {referenceFiles.map((referenceFile: IssueReferenceFile) => {
-              const canDeleteManagedReference =
-                referenceFile.kind === "folder_archive" || referenceFile.kind === "repo_link";
-              return (
-                <div key={`${referenceFile.kind}:${referenceFile.id}`} className="rounded-md border border-border p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate text-sm font-medium">{referenceFile.name}</span>
-                        <span className="rounded bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                          {referenceFile.kind.replace(/_/g, " ")}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {referenceFile.documentKey ? `Document key: ${referenceFile.documentKey}` : null}
-                        {referenceFile.attachmentId ? `Attachment: ${referenceFile.attachmentId}` : null}
-                        {referenceFile.repoUrl ? `Repo: ${referenceFile.repoUrl}` : null}
-                        {referenceFile.repoRef ? ` @ ${referenceFile.repoRef}` : null}
-                        {!referenceFile.documentKey && !referenceFile.attachmentId && !referenceFile.repoUrl && referenceFile.byteSize
-                          ? `${(referenceFile.byteSize / 1024).toFixed(1)} KB`
-                          : null}
-                      </div>
-                      <p className="text-[11px] text-muted-foreground">
-                        Updated {relativeTime(referenceFile.updatedAt)}
-                      </p>
-                    </div>
-                    {canDeleteManagedReference ? (
-                      <button
-                        type="button"
-                        className="text-muted-foreground hover:text-destructive"
-                        onClick={() => deleteReferenceFile.mutate(referenceFile.id)}
-                        disabled={deleteReferenceFile.isPending}
-                        title="Delete reference file"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {attachmentsInitialLoading ? (
-        <IssueSectionSkeleton titleWidth="w-24" rows={2} />
-      ) : hasAttachments ? (
-        <div
-        className={cn(
-          "space-y-3 rounded-lg transition-colors",
-        )}
-        onDragEnter={(evt) => {
-          evt.preventDefault();
-          setAttachmentDragActive(true);
-        }}
-        onDragOver={(evt) => {
-          evt.preventDefault();
-          setAttachmentDragActive(true);
-        }}
-        onDragLeave={(evt) => {
-          if (evt.currentTarget.contains(evt.relatedTarget as Node | null)) return;
-          setAttachmentDragActive(false);
-        }}
-        onDrop={(evt) => void handleAttachmentDrop(evt)}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-medium text-muted-foreground">Attachments</h3>
-          {attachmentUploadButton}
-        </div>
-
-        {attachmentError && (
-          <p className="text-xs text-destructive">{attachmentError}</p>
-        )}
-
-        {imageAttachments.length > 0 && (
-          <div className="grid grid-cols-4 gap-2">
-            {imageAttachments.map((attachment) => (
-              <div
-                key={attachment.id}
-                className="group relative aspect-square rounded-lg overflow-hidden border border-border bg-accent/10 cursor-pointer"
-                onClick={() => {
-                  const idx = imageAttachments.findIndex((a) => a.id === attachment.id);
-                  setGalleryIndex(idx >= 0 ? idx : 0);
-                  setGalleryOpen(true);
-                }}
-              >
-                <img
-                  src={attachment.contentPath}
-                  alt={attachment.originalFilename ?? "attachment"}
-                  className="h-full w-full object-cover"
-                  loading="lazy"
-                />
-                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors" />
-                {confirmDeleteId === attachment.id ? (
-                  <div
-                    className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/60"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <p className="text-xs text-white font-medium">Delete?</p>
-                    <div className="flex gap-1.5">
-                      <button
-                        type="button"
-                        className="rounded bg-destructive px-2 py-0.5 text-xs text-white hover:bg-destructive/80"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteAttachment.mutate(attachment.id);
-                          setConfirmDeleteId(null);
-                        }}
-                        disabled={deleteAttachment.isPending}
-                      >
-                        Yes
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded bg-muted px-2 py-0.5 text-xs hover:bg-muted/80"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setConfirmDeleteId(null);
-                        }}
-                      >
-                        No
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    className="absolute top-1.5 right-1.5 rounded-md bg-black/50 p-1 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setConfirmDeleteId(attachment.id);
-                    }}
-                    title="Delete attachment"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {nonImageAttachments.length > 0 && (
-          <div className="space-y-2">
-            {nonImageAttachments.map((attachment) => (
-              <div key={attachment.id} className="border border-border rounded-md p-2">
-                <div className="flex items-center justify-between gap-2">
-                  <a
-                    href={attachment.contentPath}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs hover:underline truncate"
-                    title={attachment.originalFilename ?? attachment.id}
-                  >
-                    {attachment.originalFilename ?? attachment.id}
-                  </a>
-                  <button
-                    type="button"
-                    className="text-muted-foreground hover:text-destructive"
-                    onClick={() => deleteAttachment.mutate(attachment.id)}
-                    disabled={deleteAttachment.isPending}
-                    title="Delete attachment"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                <p className="text-[11px] text-muted-foreground">
-                  {attachment.contentType} · {(attachment.byteSize / 1024).toFixed(1)} KB
-                </p>
-              </div>
-            ))}
-          </div>
-        )}
-        </div>
-      ) : null}
-
-      <ImageGalleryModal
-        images={imageAttachments}
-        initialIndex={galleryIndex}
-        open={galleryOpen}
-        onOpenChange={setGalleryOpen}
-      />
+      </details>
 
       <LocalFileViewerDialog
         issueId={issue.id}
